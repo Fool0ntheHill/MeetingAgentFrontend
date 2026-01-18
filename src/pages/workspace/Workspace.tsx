@@ -132,7 +132,7 @@ const Workspace = () => {
           人机协同工作台
         </Typography.Title>
         <Space>
-          <Button onClick={() => navigate(`/tasks/${id}`)}>返回任务</Button>
+          <Button onClick={() => navigate('/tasks')}>返回列表</Button>
           <Button icon={<RedoOutlined />} onClick={handleRegenerate}>
             重新生成（新版本）
           </Button>
@@ -170,7 +170,11 @@ const Workspace = () => {
                 <List.Item
                   key={item.paragraph_id}
                   actions={[
-                    <Button size="small" type="link" onClick={() => handleSpeakerRename(item.speaker, `${item.speaker}*`, 'single', item.paragraph_id)}>
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={() => handleSpeakerRename(item.speaker, `${item.speaker}*`, 'single', item.paragraph_id)}
+                    >
                       仅此处改名
                     </Button>,
                     <Button size="small" type="link" onClick={() => handleSpeakerRename(item.speaker, `${item.speaker}*`, 'global')}>
@@ -182,7 +186,11 @@ const Workspace = () => {
                   <List.Item.Meta
                     title={
                       <Space>
-                        <Tag color="blue" style={{ cursor: 'pointer' }} onClick={() => audioRef.current && (audioRef.current.currentTime = item.start_time)}>
+                        <Tag
+                          color="blue"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => audioRef.current && (audioRef.current.currentTime = item.start_time)}
+                        >
                           {Math.round(item.start_time)}s
                         </Tag>
                         <Tag color="geekblue">{item.speaker}</Tag>
