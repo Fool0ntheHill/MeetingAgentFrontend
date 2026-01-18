@@ -19,6 +19,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
+import TaskFloatingWidget from '@/components/TaskFloatingWidget'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 // logo 暂时隐藏
 
@@ -36,6 +37,12 @@ type FlatFolder = {
   id: string
   name: string
   count: number
+}
+
+type StoredFolder = {
+  id: string
+  folder_id?: string
+  name: string
 }
 
 const AppLayout = () => {
@@ -74,13 +81,16 @@ const AppLayout = () => {
     if (path.startsWith('/tasks')) return 'tasks-all'
     return ''
   }, [location.pathname, location.search])
-  const safeFolders = Array.isArray(folders) ? folders : []
-
   const { totalCount, uncatCount, folderTags } = useMemo(() => {
+    const folderList: StoredFolder[] = Array.isArray(folders) ? folders : []
     const total = taskList.length
     const uncat = taskList.filter((t) => !(t as { folder_id?: string }).folder_id).length
     const map = new Map<string, FlatFolder>()
-    safeFolders.forEach((f) => map.set((f as any).folder_id ?? (f as any).id ?? '', { id: (f as any).folder_id ?? (f as any).id ?? '', name: f.name, count: 0 }))
+    folderList.forEach((folder) => {
+      const folderId = folder.folder_id ?? folder.id ?? ''
+      if (!folderId) return
+      map.set(folderId, { id: folderId, name: folder.name, count: 0 })
+    })
     taskList.forEach((t) => {
       const folderId = (t as { folder_id?: string }).folder_id
       if (!folderId) return
@@ -90,7 +100,7 @@ const AppLayout = () => {
       }
     })
     return { totalCount: total, uncatCount: uncat, folderTags: Array.from(map.values()) }
-  }, [taskList, safeFolders])
+  }, [taskList, folders])
 
   const openCreate = () => {
     setFoldersOpen(true)
@@ -117,7 +127,7 @@ const AppLayout = () => {
       message.success(editingFolder ? '已更新文件夹' : '已创建文件夹')
       setFolderModalOpen(false)
       setEditingFolder(null)
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -450,6 +460,7 @@ const AppLayout = () => {
           </Content>
         </Layout>
       </Layout>
+      <TaskFloatingWidget />
 
       <Modal
         title={editingFolder ? '重命名文件夹' : '新建文件夹'}

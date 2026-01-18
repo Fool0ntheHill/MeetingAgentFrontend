@@ -12,6 +12,23 @@ interface FolderState {
   remove: (id: string) => Promise<void>
 }
 
+type RawFolderItem = Partial<FolderItem> & {
+  folder_id?: string
+  id?: string
+}
+
+const normalizeFolder = (item: RawFolderItem): FolderItem & { id: string; folder_id: string } => {
+  const folderId = typeof item.folder_id === 'string' ? item.folder_id : typeof item.id === 'string' ? item.id : ''
+  return {
+    id: folderId,
+    folder_id: folderId,
+    name: item.name ?? '',
+    parent_id: item.parent_id ?? null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  }
+}
+
 export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
   loading: false,
@@ -19,17 +36,10 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     set({ loading: true })
     try {
       const res = await listFolders()
-      const itemsRaw = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : []
-      const items = itemsRaw.map((f: any) => ({
-        id: f.folder_id ?? f.id ?? '',
-        folder_id: f.folder_id ?? f.id ?? '',
-        name: f.name,
-        parent_id: f.parent_id ?? null,
-        created_at: f.created_at,
-        updated_at: f.updated_at,
-      }))
+      const itemsRaw: RawFolderItem[] = Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : []
+      const items = itemsRaw.map((f) => normalizeFolder(f))
       set({ folders: items })
-    } catch (e) {
+    } catch {
       message.error('获取文件夹失败')
       set({ folders: [] })
     } finally {

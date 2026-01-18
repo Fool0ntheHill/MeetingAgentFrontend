@@ -49,7 +49,7 @@ const Home = () => {
             <Col span={6} key={item?.task_id || idx}>
               <Card
                 hoverable
-                onClick={() => (item?.task_id ? navigate(`/tasks/${item.task_id}`) : undefined)}
+                onClick={() => (item?.task_id ? navigate(`/workspace/${item.task_id}`) : undefined)}
                 style={{ minHeight: 120 }}
               >
                 {loading ? (

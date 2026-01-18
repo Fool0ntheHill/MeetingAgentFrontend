@@ -11,32 +11,38 @@ import {
 } from '@/api/tasks'
 import type { CreateTaskRequest, CreateTaskResponse, TaskDetailResponse, TaskStatusResponse } from '@/types/frontend-types'
 
-const normalizeTask = (raw: any): TaskDetailResponse & {
+const getRecord = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' ? (value as Record<string, unknown>) : {})
+
+const getString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+const normalizeTask = (raw: unknown): TaskDetailResponse & {
   folder_id?: string | null
   folder_path?: string
   display_name?: string
   name?: string
   session_id?: string
 } => {
+  const obj = getRecord(raw)
+  const folderObj = getRecord(obj.folder)
   const rawFolder =
-    raw?.folder_id ??
-    raw?.folderId ??
-    raw?.folder?.id ??
-    raw?.folder?.folder_id ??
-    raw?.folder ??
-    null
+    getString(obj.folder_id) ??
+    getString(obj.folderId) ??
+    getString(folderObj.id) ??
+    getString(folderObj.folder_id) ??
+    (typeof obj.folder === 'string' ? obj.folder : null)
   const folder_id = typeof rawFolder === 'string' && rawFolder.trim() ? rawFolder : null
   const folder_path =
-    raw?.folder_path ??
-    raw?.folderPath ??
-    raw?.folder?.name ??
-    raw?.folder_name ??
+    getString(obj.folder_path) ??
+    getString(obj.folderPath) ??
+    getString(folderObj.name) ??
+    getString(obj.folder_name) ??
     undefined
+  const base = typeof raw === 'object' && raw !== null ? (raw as TaskDetailResponse) : ({} as TaskDetailResponse)
   return {
-    ...raw,
-    task_id: raw?.task_id ?? raw?.session_id ?? raw?.id ?? '',
-    display_name: raw?.display_name ?? raw?.name ?? raw?.title ?? undefined,
-    name: raw?.name ?? raw?.display_name ?? raw?.title ?? undefined,
+    ...base,
+    task_id: getString(obj.task_id) ?? getString(obj.session_id) ?? getString(obj.id) ?? '',
+    display_name: getString(obj.display_name) ?? getString(obj.name) ?? getString(obj.title) ?? undefined,
+    name: getString(obj.name) ?? getString(obj.display_name) ?? getString(obj.title) ?? undefined,
     folder_id,
     folder_path,
   }
@@ -77,7 +83,7 @@ export const useTaskStore = create<TaskState>((set) => ({
         : Array.isArray(res)
           ? (res as TaskDetailResponse[])
           : []
-      const items = itemsRaw.map((t: any) => normalizeTask(t))
+      const items = itemsRaw.map((t) => normalizeTask(t))
       const total = typeof (res as { total?: number })?.total === 'number' ? (res as { total: number }).total : items.length
       set({ list: items, total })
     } finally {
@@ -93,7 +99,7 @@ export const useTaskStore = create<TaskState>((set) => ({
         : Array.isArray(res)
           ? (res as TaskDetailResponse[])
           : []
-      const items = itemsRaw.map((t: any) => {
+      const items = itemsRaw.map((t) => {
         const normalized = normalizeTask(t)
         return {
           ...normalized,

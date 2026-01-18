@@ -127,7 +127,7 @@ const TaskList = () => {
           await renameTask(firstId, value)
           message.success('重命名成功')
           void fetchList({ limit: 200, offset: 0, include_deleted: false })
-        } catch (error) {
+        } catch {
           message.error('重命名失败，请稍后重试')
         }
       },
@@ -157,7 +157,7 @@ const TaskList = () => {
             fetchList({ limit: 200, offset: 0, include_deleted: false }),
             fetchFolders(),
           ])
-        } catch (error) {
+        } catch {
           message.error('移动失败，请稍后重试')
         }
       },
@@ -175,7 +175,7 @@ const TaskList = () => {
           clearSelection()
           void fetchList({ limit: 200, offset: 0, include_deleted: false })
           void fetchTrash({ limit: 200, offset: 0 })
-        } catch (error) {
+        } catch {
           clearSelection()
           message.error('移至回收站失败，请稍后重试')
         }
@@ -360,7 +360,7 @@ const TaskList = () => {
                 background: checked ? '#f7f7f9' : 'white',
                 cursor: 'pointer',
               }}
-              onClick={() => navigate(`/tasks/${item.task_id}`)}
+              onClick={() => navigate(`/workspace/${item.task_id}`)}
             >
               <div>
                 <input
