@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 import { Navigate, Outlet, createBrowserRouter, useLocation } from 'react-router-dom'
 import AppLayout from '@/layouts/AppLayout'
 import Loading from '@/components/Loading'
@@ -20,7 +20,7 @@ const Billing = lazy(() => import('@/pages/billing/Billing'))
 const Profile = lazy(() => import('@/pages/profile/Profile'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
-const withSuspense = (node: JSX.Element) => <Suspense fallback={<Loading />}>{node}</Suspense>
+const withSuspense = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>
 
 const RequireAuth = () => {
   const { token } = useAuthStore()
