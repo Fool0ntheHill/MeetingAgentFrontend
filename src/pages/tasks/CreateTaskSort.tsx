@@ -15,6 +15,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { useNavigate } from 'react-router-dom'
 import { useCreateTaskDraftStore, type UploadedAudio } from '@/store/createTaskDraft'
+import CreateTaskSteps from './CreateTaskSteps'
 import './create-task.css'
 
 const formatDuration = (seconds?: number | null) => {
@@ -121,6 +122,7 @@ const CreateTaskSort = () => {
         <Typography.Paragraph type="secondary" className="create-task__subtitle">
           轻轻拖拽即可调整顺序，松手即生效。系统会根据顺序生成说话人编号，体验更丝滑。
         </Typography.Paragraph>
+        <CreateTaskSteps current={1} />
         <Card className="create-task__step-card" bordered={false}>
           {uploads.length === 0 ? (
             <Typography.Text type="secondary">暂无已上传文件，请先返回上传。</Typography.Text>

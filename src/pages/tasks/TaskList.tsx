@@ -44,6 +44,7 @@ const TaskList = () => {
 
   const folderFilter = useMemo(() => new URLSearchParams(location.search).get('folder'), [location.search])
   const isTrash = useMemo(() => location.pathname.startsWith('/tasks/trash'), [location.pathname])
+  const workspaceSearch = useMemo(() => (isTrash ? '' : location.search), [isTrash, location.search])
 
   useEffect(() => {
     fetchFolders()
@@ -360,7 +361,7 @@ const TaskList = () => {
                 background: checked ? '#f7f7f9' : 'white',
                 cursor: 'pointer',
               }}
-              onClick={() => navigate(`/workspace/${item.task_id}`)}
+              onClick={() => navigate(`/workspace/${item.task_id}${workspaceSearch}`)}
             >
               <div>
                 <input

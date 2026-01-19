@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { uploadAudio } from '@/api/tasks'
 import { useCreateTaskDraftStore } from '@/store/createTaskDraft'
 import { ENV } from '@/config/env'
+import CreateTaskSteps from './CreateTaskSteps'
 import './create-task.css'
 
 const audioTypes = ['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/x-m4a', 'audio/webm']
@@ -105,6 +106,7 @@ const CreateTask = () => {
         <Typography.Paragraph type="secondary" className="create-task__subtitle">
           支持多文件上传，上传完成后可在下一步拖拽排序。我们会根据顺序自动生成说话人编号并拼接音频。
         </Typography.Paragraph>
+        <CreateTaskSteps current={0} />
         <Card className="create-task__card" bordered={false}>
           <Upload.Dragger
             multiple

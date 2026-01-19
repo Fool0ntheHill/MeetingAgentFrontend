@@ -75,11 +75,11 @@ export const router = createBrowserRouter([
             path: '/profile',
             element: withSuspense(<Profile />),
           },
+          {
+            path: '/workspace/:id',
+            element: withSuspense(<Workspace />),
+          },
         ],
-      },
-      {
-        path: '/workspace/:id',
-        element: withSuspense(<Workspace />),
       },
     ],
   },

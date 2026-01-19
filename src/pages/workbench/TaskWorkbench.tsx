@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Modal, Progress, Row, Space, Tag, Typography } from 'antd'
+import { Button, Card, Col, Drawer, Modal, Progress, Row, Space, Tag, Typography, message } from 'antd'
 import {
   CheckCircleFilled,
   ClockCircleOutlined,
@@ -12,9 +12,11 @@ import {
   StopOutlined,
   DeleteOutlined,
   ArrowLeftOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTaskRunnerStore, type TaskStep } from '@/store/task-runner'
+import TaskConfigForm, { type CreateTaskFormValues } from '@/components/TaskConfigForm'
 import './task-workbench.css'
 
 const tips = ['正在准备模型资源…', '数据加速处理中…', '稍后即可进入结果区。', '可切换页面，任务会在后台持续运行。']
@@ -46,6 +48,7 @@ const TaskWorkbench = () => {
   const { tasks, ensureTask, startTask, pauseTask, resumeTask, abortTask, deleteTask } = useTaskRunnerStore()
   const task = id ? tasks[id] : undefined
   const [tip, setTip] = useState(tips[0])
+  const [configDrawerOpen, setConfigDrawerOpen] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -141,6 +144,28 @@ const TaskWorkbench = () => {
     })
   }
 
+  const handleRegenerate = (values: CreateTaskFormValues) => {
+    console.log('Regenerate with values:', values)
+    message.loading({ content: '正在重新提交任务...', key: 'regenerate' })
+    setTimeout(() => {
+      message.success({ content: '任务已重新提交', key: 'regenerate' })
+      setConfigDrawerOpen(false)
+      // Mock restarting the task
+      if (id) startTask(id) 
+    }, 1000)
+  }
+
+  const initialConfigValues: Partial<CreateTaskFormValues> = useMemo(() => {
+    if (!task) return {}
+    return {
+      meeting_type: task.config.meetingType,
+      output_language: task.config.outputLanguage,
+      asr_languages: task.config.asrLanguages,
+      skip_speaker_recognition: false,
+      description: '',
+    }
+  }, [task])
+
   return (
     <div className="workbench">
       <div className="workbench__container">
@@ -151,9 +176,14 @@ const TaskWorkbench = () => {
             </Typography.Title>
             <Typography.Text type="secondary">{task?.title || '正在加载任务信息…'}</Typography.Text>
           </div>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
-            返回列表 / 后台运行
-          </Button>
+          <Space>
+            <Button onClick={() => setConfigDrawerOpen(true)} icon={<ReloadOutlined />}>
+              重新生成
+            </Button>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
+              返回列表 / 后台运行
+            </Button>
+          </Space>
         </div>
 
         <Card className="workbench__progress" bordered={false}>
@@ -287,6 +317,19 @@ const TaskWorkbench = () => {
           </Space>
         </Card>
       </div>
+      <Drawer
+        title="重新生成任务配置"
+        width={600}
+        onClose={() => setConfigDrawerOpen(false)}
+        open={configDrawerOpen}
+        styles={{ body: { paddingBottom: 80 } }}
+      >
+        <TaskConfigForm
+          initialValues={initialConfigValues}
+          onFinish={handleRegenerate}
+          submitText="确认并重新生成"
+        />
+      </Drawer>
     </div>
   )
 }

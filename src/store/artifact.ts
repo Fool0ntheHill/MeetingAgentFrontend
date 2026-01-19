@@ -42,7 +42,8 @@ export const useArtifactStore = create<ArtifactState>((set) => ({
     set({ current: data, parsedContent: parsed })
   },
   regenerate: async (taskId, payload) => {
-    const res = await regenerateArtifact(taskId, payload)
+    // Default to 'meeting_minutes' for now as it's the main artifact type
+    const res = await regenerateArtifact(taskId, 'meeting_minutes', payload)
     return res
   },
 }))
