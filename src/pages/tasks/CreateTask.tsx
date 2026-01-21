@@ -60,6 +60,7 @@ const CreateTask = () => {
       addUpload({
         uid: rcFile.uid ?? rcFile.name ?? fallbackId,
         name: rcFile.name ?? '未命名文件',
+        original_filename: res.original_filename ?? rcFile.name ?? '未命名文件',
         file_path: res.file_path,
         duration,
       })

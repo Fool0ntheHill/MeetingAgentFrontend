@@ -1,9 +1,10 @@
 import { Card, Col, Row, Typography, Tag, Space, Button, List, Skeleton } from 'antd'
 import { ArrowRightOutlined } from '@ant-design/icons'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTaskStore } from '@/store/task'
+import { listTasks } from '@/api/tasks'
 import { useTemplateStore } from '@/store/template'
+import { useAuthStore } from '@/store/auth'
 import StatusTag from '@/components/StatusTag'
 import type { TaskDetailResponse, PromptTemplate } from '@/types/frontend-types'
 
@@ -15,16 +16,49 @@ const latestNews = [
 
 const Home = () => {
   const navigate = useNavigate()
-  const { list, loading, fetchList } = useTaskStore()
   const { templates, loading: tplLoading, fetchTemplates } = useTemplateStore()
+  const { userId, tenantId } = useAuthStore()
+  const [tasksLoading, setTasksLoading] = useState(false)
+  const [latestTasks, setLatestTasks] = useState<TaskDetailResponse[]>([])
+  const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
   useEffect(() => {
-    fetchList({ limit: 6, offset: 0 })
-    fetchTemplates()
-  }, [fetchList, fetchTemplates])
+    const loadTasks = async () => {
+      setTasksLoading(true)
+      try {
+        const res = await listTasks({ limit: 6, offset: 0, include_deleted: false })
+        const itemsRaw = Array.isArray((res as { items?: TaskDetailResponse[] })?.items)
+          ? (res as { items: TaskDetailResponse[] }).items
+          : Array.isArray(res)
+            ? (res as TaskDetailResponse[])
+            : []
+        setLatestTasks(itemsRaw)
+      } catch {
+        setLatestTasks([])
+      } finally {
+        setTasksLoading(false)
+      }
+    }
+    void loadTasks()
+    fetchTemplates(userId || undefined, tenantId || undefined)
+  }, [fetchTemplates, tenantId, userId])
 
-  const taskCards: Array<TaskDetailResponse | undefined> = loading ? Array.from({ length: 4 }) : list.slice(0, 4)
+  const taskCards: Array<TaskDetailResponse | undefined> = tasksLoading ? Array.from({ length: 4 }) : latestTasks.slice(0, 4)
   const templateCards: Array<PromptTemplate | undefined> = tplLoading ? Array.from({ length: 4 }) : templates.slice(0, 4)
+  const getTaskName = (item?: TaskDetailResponse) =>
+    item?.display_name || item?.meeting_type || (item as { name?: string })?.name || item?.task_id || ''
+  const formatDate = (value?: string) => {
+    if (!value) return '--'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '--'
+    return dateFormatter.format(date)
+  }
 
   return (
     <div className="page-container">
@@ -52,17 +86,19 @@ const Home = () => {
                 onClick={() => (item?.task_id ? navigate(`/workspace/${item.task_id}`) : undefined)}
                 style={{ minHeight: 120 }}
               >
-                {loading ? (
+                {tasksLoading ? (
                   <Skeleton active paragraph={{ rows: 2 }} />
                 ) : (
                   <>
-                    <Typography.Text strong>{item?.task_id}</Typography.Text>
+                    <Typography.Text strong>{getTaskName(item)}</Typography.Text>
                     <div style={{ marginTop: 8 }}>
                       {item?.state && <StatusTag state={item.state} />}{' '}
-                      <Typography.Text type="secondary">{item?.meeting_type}</Typography.Text>
                     </div>
                     <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                      更新时间：{item?.updated_at}
+                      创建时间：{formatDate(item?.created_at)}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+                      更新时间：{formatDate(item?.updated_at)}
                     </Typography.Text>
                   </>
                 )}

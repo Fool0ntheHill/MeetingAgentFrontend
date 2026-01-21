@@ -20,15 +20,20 @@ const ActionFooter = ({
     <div className="workspace-footer">
       <div className="workspace-footer__content">
         <div className="workspace-footer__meta">
-          <Checkbox
-            checked={allowTrain}
-            onChange={(e) => onAllowTrainChange(e.target.checked)}
-            className="workspace-footer__checkbox"
-          >
-            <Typography.Text type="secondary" className="workspace-footer__text">
-              允许 AI 学习本次修正以提升下次准确率
-            </Typography.Text>
-          </Checkbox>
+          <div className="workspace-footer__checkbox-row">
+            <Checkbox
+              checked={allowTrain}
+              onChange={(e) => onAllowTrainChange(e.target.checked)}
+              className="workspace-footer__checkbox"
+            >
+              <Typography.Text type="secondary" className="workspace-footer__text">
+                允许 AI 学习本次修正以提升下次准确率
+              </Typography.Text>
+            </Checkbox>
+            <Tooltip title="本次录音转写内容会被写入日志并提交给大模型，存在少量泄露风险，勾选前请确认本次会议无敏感内容">
+              <span className="workspace-footer__info">i</span>
+            </Tooltip>
+          </div>
           <Checkbox
             checked={isConfirmed}
             onChange={(e) => onConfirmChange(e.target.checked)}

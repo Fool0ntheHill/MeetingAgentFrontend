@@ -1,11 +1,17 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Button, Card, Dropdown, Flex, Modal, Typography, message, Input, Select } from 'antd'
+import { Button, Card, Dropdown, Flex, Modal, Typography, message, Input, Select, Pagination } from 'antd'
 import type { MenuProps } from 'antd'
 import { EllipsisOutlined, DeleteOutlined, EditOutlined, FolderOpenOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
-import { renameTask, batchMoveTasks, batchDeleteTasks } from '@/api/tasks'
+import {
+  renameTask,
+  batchMoveTasks,
+  batchDeleteTasks,
+  batchRestoreTasks,
+  deleteTaskPermanent,
+} from '@/api/tasks'
 import StatusTag from '@/components/StatusTag'
 import type { TaskDetailResponse } from '@/types/frontend-types'
 
@@ -13,7 +19,7 @@ type TimeField = 'created_at' | 'updated_at'
 type SortOrder = 'asc' | 'desc'
 
 const formatDuration = (seconds?: number | null) => {
-  if (!seconds || Number.isNaN(seconds)) return '00:00:00'
+  if (seconds == null || Number.isNaN(seconds)) return '--:--'
   const hrs = Math.floor(seconds / 3600)
   const mins = Math.floor((seconds % 3600) / 60)
   const secs = Math.floor(seconds % 60)
@@ -32,36 +38,54 @@ const getSortValue = (task: TaskDetailResponse & { last_content_modified_at?: st
 }
 
 const TaskList = () => {
-  const { list, fetchList, fetchTrash, trash } = useTaskStore()
+  const { list, trash, fetchList, fetchTrash } = useTaskStore()
   const { folders, fetch: fetchFolders } = useFolderStore()
   const location = useLocation()
   const [hoverId, setHoverId] = useState<string | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectedByKey, setSelectedByKey] = useState<Record<string, Set<string>>>({})
   const [timeField, setTimeField] = useState<TimeField>('created_at')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [headerHover, setHeaderHover] = useState(false)
+  const [pageSize, setPageSize] = useState(20)
+  const [pageByKey, setPageByKey] = useState<Record<string, number>>({})
   const navigate = useNavigate()
 
   const folderFilter = useMemo(() => new URLSearchParams(location.search).get('folder'), [location.search])
   const isTrash = useMemo(() => location.pathname.startsWith('/tasks/trash'), [location.pathname])
+  const listKey = useMemo(() => `${isTrash ? 'trash' : 'list'}:${folderFilter ?? 'all'}`, [isTrash, folderFilter])
   const workspaceSearch = useMemo(() => (isTrash ? '' : location.search), [isTrash, location.search])
+
+  const selected = selectedByKey[listKey] ?? new Set<string>()
+  const page = pageByKey[listKey] ?? 1
+
+  const toggleSelect = (id: string) => {
+    setSelectedByKey((prev) => {
+      const next = new Set(prev[listKey] ?? new Set())
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return { ...prev, [listKey]: next }
+    })
+  }
+
+  const clearSelection = () =>
+    setSelectedByKey((prev) => ({
+      ...prev,
+      [listKey]: new Set(),
+    }))
 
   useEffect(() => {
     fetchFolders()
   }, [fetchFolders])
 
   useEffect(() => {
-    // 保持全量列表用于侧边栏统计；页面自身再做前端筛选
+    // 保持全量列表用于排序与全选，再做前端分页
     fetchList({ limit: 200, offset: 0, include_deleted: false })
     if (isTrash) {
       fetchTrash({ limit: 200, offset: 0 })
     }
   }, [fetchList, fetchTrash, isTrash])
 
-  const effectiveList = useMemo(() => {
-    const base = isTrash ? trash : list
-    return base
-  }, [list, trash, isTrash])
+  const effectiveList = useMemo(() => (isTrash ? trash : list), [isTrash, list, trash])
 
   const filteredList = useMemo(() => {
     if (isTrash) return effectiveList
@@ -79,17 +103,13 @@ const TaskList = () => {
     })
     return arr
   }, [filteredList, timeField, sortOrder])
-
-  const toggleSelect = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const clearSelection = () => setSelected(new Set())
+  const displayTotal = sortedList.length
+  const totalPages = Math.max(1, Math.ceil(sortedList.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pagedList = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return sortedList.slice(start, start + pageSize)
+  }, [currentPage, pageSize, sortedList])
 
   const folderMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -168,7 +188,7 @@ const TaskList = () => {
   const handleTrash = (ids: string[]) => {
     Modal.confirm({
       title: '移至回收站',
-      content: `确定将选中的 ${ids.length} 条会话移至回收站吗？`,
+      content: `确定将${ids.length}条任务移至回收站？`,
       onOk: async () => {
         try {
           await batchDeleteTasks(ids)
@@ -184,14 +204,62 @@ const TaskList = () => {
     })
   }
 
+  const handleRestore = (ids: string[]) => {
+    Modal.confirm({
+      title: '恢复任务',
+      content: `确定恢复${ids.length}条任务到原文件夹？`,
+      onOk: async () => {
+        try {
+          await batchRestoreTasks(ids)
+          message.success('已恢复')
+          clearSelection()
+          await Promise.all([
+            fetchList({ limit: 200, offset: 0, include_deleted: false }),
+            fetchTrash({ limit: 200, offset: 0 }),
+          ])
+        } catch {
+          message.error('恢复失败，请稍后重试')
+        }
+      },
+    })
+  }
+
+  const handlePermanentDelete = (ids: string[]) => {
+    Modal.confirm({
+      title: '永久删除',
+      content: `确定彻底删除${ids.length}条任务？该操作不可撤销。`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteTaskPermanent(id)))
+          message.success('已删除')
+          clearSelection()
+          await fetchTrash({ limit: 200, offset: 0 })
+        } catch {
+          message.error('删除失败，请稍后重试')
+        }
+      },
+    })
+  }
+
   const rowMenu = (id: string): MenuProps => ({
-    items: [
-      { key: 'rename', icon: <EditOutlined />, label: '重命名' },
-      { key: 'move', icon: <FolderOpenOutlined />, label: '移至文件夹' },
-      { key: 'delete', icon: <DeleteOutlined />, label: '移至回收站' },
-    ],
+    items: isTrash
+      ? [
+          { key: 'restore', icon: <FolderOpenOutlined />, label: '恢复' },
+          { key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true },
+        ]
+      : [
+          { key: 'rename', icon: <EditOutlined />, label: '重命名' },
+          { key: 'move', icon: <FolderOpenOutlined />, label: '移动到' },
+          { key: 'delete', icon: <DeleteOutlined />, label: '移至回收站' },
+        ],
     onClick: ({ key, domEvent }) => {
       domEvent?.stopPropagation()
+      if (isTrash) {
+        if (key === 'restore') handleRestore([id])
+        if (key === 'delete') handlePermanentDelete([id])
+        return
+      }
       if (key === 'rename') handleRename([id])
       if (key === 'move') handleMove([id])
       if (key === 'delete') {
@@ -265,7 +333,7 @@ const TaskList = () => {
               checked={selected.size > 0 && selected.size === filteredList.length}
               onChange={(e) => {
                 if (e.target.checked) {
-                  setSelected(new Set(filteredList.map((i) => i.task_id)))
+                  setSelectedByKey((prev) => ({ ...prev, [listKey]: new Set(filteredList.map((i) => i.task_id)) }))
                 } else {
                   clearSelection()
                 }
@@ -296,7 +364,7 @@ const TaskList = () => {
                 checked={selected.size === filteredList.length}
                 onChange={(e) => {
                   if (e.target.checked) {
-                    setSelected(new Set(filteredList.map((i) => i.task_id)))
+                    setSelectedByKey((prev) => ({ ...prev, [listKey]: new Set(filteredList.map((i) => i.task_id)) }))
                   } else {
                     clearSelection()
                   }
@@ -308,32 +376,56 @@ const TaskList = () => {
             </div>
             <div style={{ gridColumn: '3 / span 4', textAlign: 'left' }}>
               <Flex align="center" gap={12} justify="flex-start" wrap={false}>
-                <Button
-                  icon={<FolderOpenOutlined />}
-                  size="small"
-                  style={{ height: 30, paddingInline: 16 }}
-                  onClick={() => handleMove(Array.from(selected))}
-                >
-                  移至文件夹
-                </Button>
-                <Button
-                  icon={<EditOutlined />}
-                  size="small"
-                  style={{ height: 30, paddingInline: 16 }}
-                  disabled={selected.size !== 1}
-                  onClick={() => handleRename(Array.from(selected))}
-                >
-                  重命名
-                </Button>
-                <Button
-                  icon={<DeleteOutlined />}
-                  size="small"
-                  style={{ height: 30, paddingInline: 16 }}
-                  danger
-                  onClick={() => handleTrash(Array.from(selected))}
-                >
-                  回收站
-                </Button>
+                {isTrash ? (
+                  <>
+                    <Button
+                      icon={<FolderOpenOutlined />}
+                      size="small"
+                      style={{ height: 30, paddingInline: 16 }}
+                      onClick={() => handleRestore(Array.from(selected))}
+                    >
+                      恢复
+                    </Button>
+                    <Button
+                      icon={<DeleteOutlined />}
+                      size="small"
+                      style={{ height: 30, paddingInline: 16 }}
+                      danger
+                      onClick={() => handlePermanentDelete(Array.from(selected))}
+                    >
+                      彻底删除
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      icon={<FolderOpenOutlined />}
+                      size="small"
+                      style={{ height: 30, paddingInline: 16 }}
+                      onClick={() => handleMove(Array.from(selected))}
+                    >
+                      移至文件夹
+                    </Button>
+                    <Button
+                      icon={<EditOutlined />}
+                      size="small"
+                      style={{ height: 30, paddingInline: 16 }}
+                      disabled={selected.size !== 1}
+                      onClick={() => handleRename(Array.from(selected))}
+                    >
+                      重命名
+                    </Button>
+                    <Button
+                      icon={<DeleteOutlined />}
+                      size="small"
+                      style={{ height: 30, paddingInline: 16 }}
+                      danger
+                      onClick={() => handleTrash(Array.from(selected))}
+                    >
+                      回收站
+                    </Button>
+                  </>
+                )}
                 <div style={{ flex: 1 }} />
                 <Flex align="center" justify="flex-end" style={{ minWidth: 80 }}>
                   <Button type="link" size="small" style={{ height: 30, paddingInline: 6 }} onClick={clearSelection}>
@@ -344,7 +436,7 @@ const TaskList = () => {
             </div>
           </div>
         )}
-        {sortedList.map((item) => {
+        {pagedList.map((item) => {
           const checked = selected.has(item.task_id)
           const showCheckbox = checked || hoverId === item.task_id
           return (
@@ -361,7 +453,17 @@ const TaskList = () => {
                 background: checked ? '#f7f7f9' : 'white',
                 cursor: 'pointer',
               }}
-              onClick={() => navigate(`/workspace/${item.task_id}${workspaceSearch}`)}
+              onClick={() => {
+                if (isTrash) {
+                  toggleSelect(item.task_id)
+                  return
+                }
+                if (item.state === 'success' || item.state === 'partial_success') {
+                  navigate(`/workspace/${item.task_id}${workspaceSearch}`)
+                } else {
+                  navigate(`/tasks/${item.task_id}/workbench`)
+                }
+              }}
             >
               <div>
                 <input
@@ -377,14 +479,16 @@ const TaskList = () => {
               </div>
               <div>
                 <Typography.Text strong style={{ fontSize: 16 }}>
-                  {(item as { display_name?: string }).display_name || item.task_id}
+                  {(item as { display_name?: string }).display_name || item.meeting_type || item.task_id}
                 </Typography.Text>
                 <div style={{ marginTop: 4 }}>
-                  <StatusTag state={item.state} /> <Typography.Text type="secondary">{item.meeting_type}</Typography.Text>
+                  <StatusTag state={item.state} /> <Typography.Text type="secondary">{item.task_id}</Typography.Text>
                 </div>
               </div>
               <div>
-                <Typography.Text>{formatDuration((item as { duration?: number }).duration)}</Typography.Text>
+                <Typography.Text>
+                  {formatDuration((item as { duration?: number | null }).duration)}
+                </Typography.Text>
               </div>
               <div>
                 <Typography.Text>{item.created_at ? new Date(item.created_at).toLocaleString() : '--'}</Typography.Text>
@@ -408,6 +512,25 @@ const TaskList = () => {
         {!sortedList.length && (
           <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>暂无任务</div>
         )}
+        <div style={{ padding: '16px 20px', borderTop: '1px solid #f0f0f0' }}>
+          <Pagination
+            current={currentPage}
+            pageSize={pageSize}
+            total={displayTotal}
+            showSizeChanger
+            showQuickJumper
+            showTotal={(value) => `共 ${value} 条`}
+            onChange={(nextPage, nextSize) => {
+              if (nextSize && nextSize !== pageSize) {
+                setPageSize(nextSize)
+                setPageByKey((prev) => ({ ...prev, [listKey]: 1 }))
+              } else {
+                setPageByKey((prev) => ({ ...prev, [listKey]: nextPage }))
+              }
+              clearSelection()
+            }}
+          />
+        </div>
       </Card>
     </div>
   )

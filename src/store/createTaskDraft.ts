@@ -7,6 +7,7 @@ export interface UploadedAudio {
   name: string
   file_path: string
   speaker_id: string
+  original_filename?: string
   duration?: number
 }
 
@@ -103,7 +104,7 @@ export const useCreateTaskDraftStore = create<CreateTaskDraftState>((set) => ({
     }),
   setUploadsWithFiles: (items) =>
     set(() => {
-      const uploads = withSpeakerIds(items.map((item) => ({ ...item, speaker_id: '' })))
+      const uploads = withSpeakerIds(items.map((item) => ({ ...item, speaker_id: '', original_filename: item.name })))
       const fileList = items.map(
         (item) =>
           ({

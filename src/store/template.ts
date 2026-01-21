@@ -8,46 +8,23 @@ import {
 } from '@/api/templates'
 import type { PromptTemplate } from '@/types/frontend-types'
 
-const mockTemplates: PromptTemplate[] = [
-  {
-    template_id: 'tmpl_rec_1',
-    title: '推荐 | 通用会议纪要',
-    description: '自动提炼要点、行动项，适用于常规内部会议',
-    prompt_body: '请基于逐字稿生成纪要，包含要点与行动项',
-    artifact_type: 'meeting_minutes',
-    supported_languages: ['zh-CN', 'en-US'],
-    parameter_schema: {},
-    is_system: true,
-    scope: 'global',
-    created_at: new Date().toISOString(),
-  },
-  {
-    template_id: 'tmpl_sales_1',
-    title: '销售商机跟进',
-    description: '提取商机、竞争对手、下一步行动',
-    prompt_body: '请列出需求、竞争对手、下一步行动和责任人',
-    artifact_type: 'summary_notes',
-    supported_languages: ['zh-CN'],
-    parameter_schema: {},
-    is_system: false,
-    scope: 'tenant',
-    created_at: new Date().toISOString(),
-  },
-]
+const DEFAULT_TEMPLATE_KEY = 'default_template_id'
 
 interface TemplateState {
   templates: PromptTemplate[]
   loading: boolean
   keyword: string
   filterBy: string
+  defaultTemplateId: string | null
   fetchTemplates: (userId?: string, tenantId?: string) => Promise<void>
   setKeyword: (kw: string) => void
   setFilter: (filter: string) => void
+  setDefaultTemplateId: (templateId: string | null) => void
   filtered: () => PromptTemplate[]
   getDetail: (id: string) => Promise<PromptTemplate | null>
   create: (payload: Partial<PromptTemplate>, userId?: string) => Promise<void>
-  update: (id: string, payload: Partial<PromptTemplate>) => Promise<void>
-  remove: (id: string) => Promise<void>
+  update: (id: string, payload: Partial<PromptTemplate>, userId?: string) => Promise<void>
+  remove: (id: string, userId?: string) => Promise<void>
 }
 
 export const useTemplateStore = create<TemplateState>((set, get) => ({
@@ -55,20 +32,31 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   loading: false,
   keyword: '',
   filterBy: 'all',
+  defaultTemplateId:
+    typeof window !== 'undefined' ? window.localStorage.getItem(DEFAULT_TEMPLATE_KEY) : null,
   fetchTemplates: async (userId?: string, tenantId?: string) => {
     set({ loading: true })
     try {
       const res = await listTemplates(userId, tenantId)
       set({ templates: res.templates })
     } catch {
-      // 后端不可用时使用本地 Mock
-      set({ templates: mockTemplates })
+      set({ templates: [] })
     } finally {
       set({ loading: false })
     }
   },
   setKeyword: (kw) => set({ keyword: kw }),
   setFilter: (filter) => set({ filterBy: filter }),
+  setDefaultTemplateId: (templateId) => {
+    if (typeof window !== 'undefined') {
+      if (templateId) {
+        window.localStorage.setItem(DEFAULT_TEMPLATE_KEY, templateId)
+      } else {
+        window.localStorage.removeItem(DEFAULT_TEMPLATE_KEY)
+      }
+    }
+    set({ defaultTemplateId: templateId })
+  },
   filtered: () => {
     const { templates, keyword, filterBy } = get()
     return templates.filter((tpl) => {
@@ -90,28 +78,40 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     }
   },
   create: async (payload, userId) => {
-    await createTemplate(
+    const body = {
+      title: payload.title || '�½�ģ��',
+      prompt_body: payload.prompt_body || '',
+      artifact_type: payload.artifact_type || 'meeting_minutes',
+      description: payload.description || '',
+      supported_languages: payload.supported_languages || ['zh-CN'],
+      parameter_schema: payload.parameter_schema || {},
+    }
+    const res = await createTemplate(body, userId)
+    set((state) => ({
+      templates: [
+        ...state.templates,
+        {
+          ...body,
+          template_id: res.template_id,
+          is_system: false,
+          scope: 'private',
+          created_at: new Date().toISOString(),
+        } as PromptTemplate,
+      ],
+    }))
+  },
+  update: async (id, payload, userId) => {
+    await updateTemplate(
+      id,
       {
-        title: payload.title || '未命名模板',
-        prompt_body: payload.prompt_body || '',
-        artifact_type: payload.artifact_type || 'meeting_minutes',
-        description: payload.description || '',
-        supported_languages: payload.supported_languages || ['zh-CN'],
-        parameter_schema: payload.parameter_schema || {},
+        title: payload.title,
+        description: payload.description,
+        prompt_body: payload.prompt_body,
       },
       userId
     )
   },
-  update: async (id, payload) => {
-    await updateTemplate(id, {
-      title: payload.title,
-      description: payload.description,
-      prompt_body: payload.prompt_body,
-      supported_languages: payload.supported_languages,
-      parameter_schema: payload.parameter_schema,
-    })
-  },
-  remove: async (id) => {
-    await deleteTemplate(id)
+  remove: async (id, userId) => {
+    await deleteTemplate(id, userId)
   },
 }))

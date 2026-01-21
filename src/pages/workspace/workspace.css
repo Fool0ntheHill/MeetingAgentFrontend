@@ -335,6 +335,25 @@
   overflow: visible;
 }
 
+.workspace-markdown-surface--preview .vditor-toolbar,
+.workspace-markdown-surface--preview .vditor-tab,
+.workspace-markdown-surface--preview .vditor-preview__action {
+  display: none !important;
+}
+
+.workspace-markdown-surface--preview .vditor-content,
+.workspace-markdown-surface--preview .vditor-sv,
+.workspace-markdown-surface--preview .vditor-reset {
+  padding: 0;
+}
+
+.workspace-markdown-surface--edit .vditor-content,
+.workspace-markdown-surface--edit .vditor-sv {
+  height: auto !important;
+  min-height: 0;
+  overflow: visible;
+}
+
 .workspace-markdown-surface--edit .vditor-panel {
   z-index: 4;
   transform: translateY(6px);
@@ -587,6 +606,35 @@
   gap: 6px;
 }
 
+.workspace-transcript__rename-modal .ant-modal-content {
+  padding: 16px;
+}
+
+.workspace-transcript__rename-modal .ant-modal-header {
+  margin-bottom: 12px;
+}
+
+.workspace-transcript__rename-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workspace-transcript__rename-input {
+  border-radius: 10px;
+}
+
+.workspace-transcript__rename-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-transcript__rename-save {
+  height: 40px;
+  border-radius: 10px;
+}
+
 .workspace-audio {
   padding: 12px 16px;
   border-bottom: 1px solid #f0f0f0;
@@ -727,6 +775,14 @@
   background: #f7f7f8;
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.workspace-audio__wave .ant-slider {
+  flex: 1;
+  margin: 0;
 }
 
 .workspace-audio__loading {
@@ -772,6 +828,26 @@
 .workspace-footer__checkbox.is-confirmed {
   color: #15803d;
   font-weight: 600;
+}
+
+.workspace-footer__checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-footer__info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
 }
 
 .workspace-footer__text {

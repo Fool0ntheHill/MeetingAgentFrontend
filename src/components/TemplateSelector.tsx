@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Card, Flex, Input, Modal, Segmented, Space, Tag, Typography } from 'antd'
 import { EyeOutlined } from '@ant-design/icons'
 import { useTemplateStore } from '@/store/template'
+import { useAuthStore } from '@/store/auth'
 import type { PromptTemplate } from '@/types/frontend-types'
 import './TemplateSelector.css'
 
@@ -13,6 +14,7 @@ interface Props {
 
 const TemplateSelector = ({ open, onClose, onApply }: Props) => {
   const { fetchTemplates, filtered, setKeyword, setFilter, templates, loading } = useTemplateStore()
+  const { userId, tenantId } = useAuthStore()
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
@@ -20,9 +22,9 @@ const TemplateSelector = ({ open, onClose, onApply }: Props) => {
 
   useEffect(() => {
     if (open) {
-      fetchTemplates()
+      fetchTemplates(userId || undefined, tenantId || undefined)
     }
-  }, [fetchTemplates, open])
+  }, [fetchTemplates, open, tenantId, userId])
 
   const selectedTemplate = templates.find((tpl) => tpl.template_id === selectedId) || null
   const previewTemplate = templates.find((tpl) => tpl.template_id === previewId) || null
@@ -114,7 +116,7 @@ const TemplateSelector = ({ open, onClose, onApply }: Props) => {
                 />
               </Card>
             ))}
-            {!loading && data.length === 0 && <Typography.Text type="secondary">暂无模板，可切换 Mock 或稍后重试</Typography.Text>}
+            {!loading && data.length === 0 && <Typography.Text type="secondary">暂无模板，请稍后重试</Typography.Text>}
           </Flex>
         </div>
         <div className="template-selector__preview">

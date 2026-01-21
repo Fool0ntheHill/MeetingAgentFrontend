@@ -140,7 +140,7 @@ export const batchRestoreTasks = (taskIds: string[]) =>
 export const uploadAudio = (file: File) => {
   const formData = new FormData()
   formData.append('file', file)
-  return request<{ file_path: string }>({
+  return request<{ file_path: string; original_filename?: string }>({
     url: '/upload',
     method: 'POST',
     data: formData,

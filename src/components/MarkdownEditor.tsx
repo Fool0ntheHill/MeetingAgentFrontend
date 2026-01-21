@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type VditorType from 'vditor'
+import 'vditor/dist/js/i18n/zh_CN.js'
 import 'vditor/dist/index.css'
 
 interface Props {
@@ -56,6 +57,7 @@ const MarkdownEditor = ({
         height,
         value: initialValueRef.current,
         cache: { enable: false },
+        lang: 'zh_CN',
         toolbarConfig: { hide: readonly || hideToolbar },
         toolbar: toolbarItems,
         after: () => {
@@ -69,7 +71,7 @@ const MarkdownEditor = ({
         preview: {
           hljs: { lineNumber: true },
           actions: hidePreviewActions ? [] : undefined,
-          mode: 'editor',
+          mode: previewMode,
         },
         upload: {
           accept: 'image/*',
@@ -92,7 +94,7 @@ const MarkdownEditor = ({
       setReady(false)
       onInstanceRef.current?.(null)
     }
-  }, [height, outline, readonly, mode, hideToolbar, hidePreviewActions, toolbarItems])
+  }, [height, outline, readonly, mode, hideToolbar, hidePreviewActions, toolbarItems, previewMode])
 
   useEffect(() => {
     if (!ready || !instance.current) return

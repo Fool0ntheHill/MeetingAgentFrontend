@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Flex, Input, Space, Tag, Typography, message, Modal, Form, Select } from 'antd'
+import { Button, Card, Flex, Input, Popconfirm, Space, Tag, Typography, message } from 'antd'
 import {
   FileTextOutlined,
   PlusOutlined,
@@ -9,13 +9,15 @@ import {
 import { useTemplateStore } from '@/store/template'
 import { useAuthStore } from '@/store/auth'
 import type { PromptTemplate } from '@/types/frontend-types'
+import TemplateEditorModal from '@/components/TemplateEditorModal'
 
 const Templates = () => {
-  const { fetchTemplates, filtered, setFilter, setKeyword } = useTemplateStore()
+  const { fetchTemplates, filtered, setFilter, setKeyword, create, update, remove, defaultTemplateId, setDefaultTemplateId } =
+    useTemplateStore()
   const data = filtered()
-  const [createOpen, setCreateOpen] = useState(false)
-  const [createLoading, setCreateLoading] = useState(false)
-  const [form] = Form.useForm()
+  const [modalOpen, setModalOpen] = useState(false)
+  const [activeTemplate, setActiveTemplate] = useState<PromptTemplate | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const { userId } = useAuthStore()
 
   useEffect(() => {
@@ -34,6 +36,35 @@ const Templates = () => {
     if (tpl.artifact_type?.includes('meeting')) return <FileTextOutlined />
     if (tpl.artifact_type?.includes('summary')) return <BulbOutlined />
     return <FileSearchOutlined />
+  }
+
+  const openCreate = () => {
+    setActiveTemplate(null)
+    setModalOpen(true)
+  }
+
+  const openEdit = (tpl: PromptTemplate) => {
+    setActiveTemplate(tpl)
+    setModalOpen(true)
+  }
+
+  const handleApply = (tpl: PromptTemplate) => {
+    setDefaultTemplateId(tpl.template_id)
+    message.success(`已设置为默认模板：${tpl.title}`)
+  }
+
+  const handleDelete = async (tpl: PromptTemplate) => {
+    if (tpl.is_system) return
+    setDeletingId(tpl.template_id)
+    try {
+      await remove(tpl.template_id, userId || undefined)
+      message.success('模板已删除')
+      fetchTemplates(userId, useAuthStore.getState().tenantId || undefined)
+    } catch {
+      message.error('删除失败，请稍后重试')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const renderSection = (title: string, list: PromptTemplate[], emptyText: string) => (
@@ -59,12 +90,28 @@ const Templates = () => {
             style={{ width: 320 }}
             extra={<Tag color={tpl.is_system ? 'blue' : 'green'}>{tpl.is_system ? '官方' : '私人'}</Tag>}
             actions={[
-              <Button type="link" onClick={() => message.info('应用模板占位')}>
-                应用
+              <Button type="link" disabled={defaultTemplateId === tpl.template_id} onClick={() => handleApply(tpl)}>
+                {defaultTemplateId === tpl.template_id ? '默认使用中' : '应用'}
               </Button>,
-              <Button type="link" onClick={() => message.info('预览占位')}>
-                预览
+              <Button type="link" onClick={() => openEdit(tpl)}>
+                预览与修改
               </Button>,
+              tpl.is_system ? (
+                <Button type="link" disabled>
+                  删除
+                </Button>
+              ) : (
+                <Popconfirm
+                  title="删除模板"
+                  description="删除后不可恢复，确认删除？"
+                  onConfirm={() => handleDelete(tpl)}
+                  okButtonProps={{ danger: true, loading: deletingId === tpl.template_id }}
+                >
+                  <Button type="link" danger loading={deletingId === tpl.template_id}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              ),
             ]}
           >
             <Typography.Paragraph ellipsis={{ rows: 2 }}>{tpl.description || '暂无描述'}</Typography.Paragraph>
@@ -94,94 +141,40 @@ const Templates = () => {
             style={{ width: 240 }}
             onChange={(e) => setKeyword(e.target.value)}
           />
-          <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateOpen(true)}>
+          <Button icon={<PlusOutlined />} type="primary" onClick={openCreate}>
             创建模板
           </Button>
         </Space>
       </Flex>
       {renderSection('默认模板', official, '暂无默认模板')}
       {renderSection('私人模板', personal, '暂无私人模板')}
-      {data.length === 0 && <Typography.Text type="secondary">暂无数据，检查后端或开启 Mock。</Typography.Text>}
+      {data.length === 0 && <Typography.Text type="secondary">暂无数据，请稍后重试。</Typography.Text>}
 
-      <Modal
-        title="创建模板"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        confirmLoading={createLoading}
-        onOk={async () => {
+      <TemplateEditorModal
+        open={modalOpen}
+        mode="manage"
+        template={activeTemplate}
+        onClose={() => {
+          setModalOpen(false)
+          setActiveTemplate(null)
+        }}
+        onSave={async (payload) => {
           try {
-            const values = await form.validateFields()
-            setCreateLoading(true)
-            await useTemplateStore.getState().create({
-              title: values.title,
-              description: values.description,
-              prompt_body: values.prompt_body,
-              artifact_type: values.artifact_type,
-              supported_languages: values.supported_languages,
-              parameter_schema: {},
-            }, userId || undefined)
-            message.success('创建成功')
-            setCreateOpen(false)
-            form.resetFields()
+            if (activeTemplate) {
+              await update(activeTemplate.template_id, payload, userId || undefined)
+              message.success('已更新模板')
+            } else {
+              await create(payload, userId || undefined)
+              message.success('创建成功')
+            }
+            setModalOpen(false)
+            setActiveTemplate(null)
             fetchTemplates(userId, useAuthStore.getState().tenantId || undefined)
-          } catch (err) {
-            if ((err as { errorFields?: unknown[] })?.errorFields) return
-            message.error('创建失败，请稍后重试')
-          } finally {
-            setCreateLoading(false)
+          } catch {
+            message.error(activeTemplate ? '更新失败，请稍后重试' : '创建失败，请稍后重试')
           }
         }}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            label="模板名称"
-            name="title"
-            rules={[{ required: true, message: '请输入模板名称' }]}
-          >
-            <Input placeholder="如：会议纪要（简洁版）" />
-          </Form.Item>
-          <Form.Item
-            label="模板类型"
-            name="artifact_type"
-            rules={[{ required: true, message: '请选择模板类型' }]}
-          >
-            <Select
-              options={[
-                { label: '会议纪要', value: 'meeting_minutes' },
-                { label: '摘要 / 笔记', value: 'summary_notes' },
-                { label: '行动项', value: 'action_items' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="简介" name="description">
-            <Input.TextArea placeholder="一句话说明使用场景" maxLength={200} showCount />
-          </Form.Item>
-          <Form.Item
-            label="提示词内容"
-            name="prompt_body"
-            rules={[{ required: true, message: '请输入提示词内容' }]}
-          >
-            <Input.TextArea rows={4} placeholder="示例：请提取要点、行动项并标注责任人" />
-          </Form.Item>
-          <Form.Item
-            label="支持语言"
-            name="supported_languages"
-            rules={[{ required: true, message: '请选择至少一种语言' }]}
-          >
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="选择支持的语言"
-              options={[
-                { label: '中文 (zh-CN)', value: 'zh-CN' },
-                { label: '英文 (en-US)', value: 'en-US' },
-                { label: '日语 (ja-JP)', value: 'ja-JP' },
-                { label: '韩语 (ko-KR)', value: 'ko-KR' },
-              ]}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+      />
     </div>
   )
 }

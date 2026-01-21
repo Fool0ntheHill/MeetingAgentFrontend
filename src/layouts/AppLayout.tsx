@@ -21,6 +21,7 @@ import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
 import TaskFloatingWidget from '@/components/TaskFloatingWidget'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { listTasks } from '@/api/tasks'
 // logo 暂时隐藏
 
 const { Sider, Content } = Layout
@@ -58,6 +59,11 @@ const AppLayout = () => {
   const [confirmDelete, setConfirmDelete] = useState<FlatFolder | null>(null)
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null)
   const [plusHover, setPlusHover] = useState(false)
+  const [navCounts, setNavCounts] = useState<{ total: number; uncat: number; folderTags: FlatFolder[] }>({
+    total: 0,
+    uncat: 0,
+    folderTags: [],
+  })
   const [form] = Form.useForm<Pick<FlatFolder, 'name'>>()
 
   useEffect(() => {
@@ -78,29 +84,91 @@ const AppLayout = () => {
     if (path.startsWith('/tasks/trash')) return 'tasks-trash'
     if (path.startsWith('/tasks/folders')) return 'tasks-folders'
     if (path.startsWith('/tasks') && search.get('folder') === 'uncategorized') return 'tasks-uncat'
+    if (path.startsWith('/tasks') && search.get('folder')) return 'tasks-folder'
     if (path.startsWith('/tasks')) return 'tasks-all'
     return ''
   }, [location.pathname, location.search])
+
+  const activeFolderId = useMemo(() => {
+    const search = new URLSearchParams(location.search)
+    const folder = search.get('folder')
+    if (folder && folder !== 'uncategorized') return folder
+    return null
+  }, [location.search])
+
   const { totalCount, uncatCount, folderTags } = useMemo(() => {
     const folderList: StoredFolder[] = Array.isArray(folders) ? folders : []
-    const total = taskList.length
-    const uncat = taskList.filter((t) => !(t as { folder_id?: string }).folder_id).length
+    const total = navCounts.total || taskList.length
+    const uncat =
+      navCounts.uncat ||
+      taskList.filter((t) => {
+        const folderId = (t as { folder_id?: string }).folder_id
+        return !folderId
+      }).length
     const map = new Map<string, FlatFolder>()
     folderList.forEach((folder) => {
       const folderId = folder.folder_id ?? folder.id ?? ''
       if (!folderId) return
       map.set(folderId, { id: folderId, name: folder.name, count: 0 })
     })
-    taskList.forEach((t) => {
-      const folderId = (t as { folder_id?: string }).folder_id
-      if (!folderId) return
-      const prev = map.get(folderId)
-      if (prev) {
-        prev.count += 1
+    ;(navCounts.folderTags.length > 0 ? navCounts.folderTags : []).forEach((tag) => {
+      if (map.has(tag.id)) {
+        map.set(tag.id, { ...map.get(tag.id)!, count: tag.count })
       }
     })
+    if (navCounts.folderTags.length === 0) {
+      taskList.forEach((t) => {
+        const folderId = (t as { folder_id?: string }).folder_id
+        if (!folderId) return
+        const prev = map.get(folderId)
+        if (prev) {
+          prev.count += 1
+        }
+      })
+    }
     return { totalCount: total, uncatCount: uncat, folderTags: Array.from(map.values()) }
-  }, [taskList, folders])
+  }, [taskList, folders, navCounts])
+
+  useEffect(() => {
+    const fetchNavCounts = async () => {
+      try {
+        const res = await listTasks({ limit: 500, offset: 0, include_deleted: false })
+        const items =
+          Array.isArray((res as { items?: unknown[] })?.items) && (res as { items: unknown[] }).items
+            ? (res as { items: Record<string, unknown>[] }).items
+            : Array.isArray(res)
+              ? (res as Record<string, unknown>[])
+              : []
+        const total = items.length
+        const folderMap = new Map<string, number>()
+        items.forEach((item) => {
+          const folderId =
+            (item.folder_id as string | undefined) ??
+            ((item.folder as { id?: string } | undefined)?.id ?? (item.folder as string | undefined))
+          if (typeof folderId === 'string' && folderId.trim()) {
+            folderMap.set(folderId, (folderMap.get(folderId) ?? 0) + 1)
+          }
+        })
+        const tags: FlatFolder[] = (Array.isArray(folders) ? folders : [])
+          .map((folder) => {
+            const id = folder.folder_id ?? folder.id ?? ''
+            if (!id) return null
+            return { id, name: folder.name, count: folderMap.get(id) ?? 0 }
+          })
+          .filter((v): v is FlatFolder => Boolean(v))
+        const uncat = items.filter((item) => {
+          const folderId =
+            (item.folder_id as string | undefined) ??
+            ((item.folder as { id?: string } | undefined)?.id ?? (item.folder as string | undefined))
+          return !folderId
+        }).length
+        setNavCounts({ total, uncat, folderTags: tags })
+      } catch {
+        // ignore
+      }
+    }
+    void fetchNavCounts()
+  }, [folders])
 
   const openCreate = () => {
     setFoldersOpen(true)
@@ -137,14 +205,14 @@ const AppLayout = () => {
       <Layout style={{ minHeight: '100vh' }}>
         <Sider
           width={252}
-          collapsedWidth={80}
+          collapsedWidth={56}
           collapsible
           collapsed={collapsed}
           trigger={null}
           style={{
             background: '#fff',
             borderRight: '1px solid #f0f0f0',
-            padding: 12,
+            padding: collapsed ? 8 : 12,
             display: 'flex',
             flexDirection: 'column',
             gap: 12,
@@ -171,6 +239,8 @@ const AppLayout = () => {
           />
         </div>
 
+        {!collapsed && (
+        <>
         <div
           className="user-card"
           style={{
@@ -279,7 +349,6 @@ const AppLayout = () => {
                 </Space>
               )}
             </Button>
-            {!collapsed && <div style={{ borderTop: '1px solid #f0f0f0', marginTop: 4 }} />}
             <Button
               type={active === 'tasks-uncat' ? 'default' : 'text'}
               icon={<FileTextOutlined />}
@@ -317,13 +386,14 @@ const AppLayout = () => {
                 </Space>
               )}
             </Button>
+            <div style={{ borderTop: '1px solid #f0f0f0', marginTop: 8, marginBottom: 8 }} />
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 paddingInline: collapsed ? 0 : 6,
                 borderRadius: 10,
-                background: collapsed ? 'transparent' : '#f3f3f5',
+                background: 'transparent',
                 gap: 6,
                 height: 44,
               }}
@@ -391,7 +461,7 @@ const AppLayout = () => {
                       paddingInline: 12,
                       borderRadius: 8,
                       gap: 6,
-                      background: hoveredFolder === tag.id ? '#e1e1e5' : 'transparent',
+                      background: hoveredFolder === tag.id || activeFolderId === tag.id ? '#e1e1e5' : 'transparent',
                       transition: 'background 0.15s',
                       marginBottom: 4,
                       paddingBlock: 2,
@@ -432,9 +502,10 @@ const AppLayout = () => {
                           minWidth: 26,
                           height: 28,
                           padding: 0,
-                          background: hoveredFolder === tag.id ? '#e1e1e5' : 'transparent',
+                          background:
+                            hoveredFolder === tag.id || activeFolderId === tag.id ? '#e1e1e5' : 'transparent',
                           borderRadius: 6,
-                          opacity: hoveredFolder === tag.id ? 1 : 0,
+                          opacity: hoveredFolder === tag.id || activeFolderId === tag.id ? 1 : 0,
                           transition: 'opacity 0.15s, background 0.15s',
                         }}
                         onMouseEnter={(e) => {
@@ -452,6 +523,8 @@ const AppLayout = () => {
             )}
           </Space>
         </div>
+        </>
+        )}
 
         </Sider>
         <Layout>

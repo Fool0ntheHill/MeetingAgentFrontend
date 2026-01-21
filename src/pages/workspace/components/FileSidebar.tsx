@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { FolderOutlined, FileTextOutlined } from '@ant-design/icons'
+import { FileTextOutlined } from '@ant-design/icons'
 import { Typography, Spin } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTaskStore } from '@/store/task'
@@ -21,7 +21,7 @@ const FileSidebar = ({ listFilter }: FileSidebarProps) => {
   const navigate = useNavigate()
   const { id: currentTaskId } = useParams<{ id: string }>()
   const { list, fetchList, loading } = useTaskStore()
-  const { folders, fetch: fetchFolders } = useFolderStore()
+  const { fetch: fetchFolders } = useFolderStore()
 
   // Fetch tasks for the current folder (or root if null)
   useEffect(() => {
@@ -39,31 +39,11 @@ const FileSidebar = ({ listFilter }: FileSidebarProps) => {
 
   const filteredList = useMemo(() => {
     const items = list as TaskListItem[]
-    if (!listFilter) return items
-    if (listFilter === 'uncategorized') return items.filter((task) => !task.folder_id)
-    return items.filter((task) => task.folder_id === listFilter)
+    const completed = items.filter((task) => task.state === 'success' || task.state === 'partial_success')
+    if (!listFilter) return completed
+    if (listFilter === 'uncategorized') return completed.filter((task) => !task.folder_id)
+    return completed.filter((task) => task.folder_id === listFilter)
   }, [list, listFilter])
-
-  const folderMap = useMemo(() => {
-    const map = new Map<string, string>()
-    if (Array.isArray(folders)) {
-      folders.forEach((f) => map.set(f.id, f.name))
-    }
-    return map
-  }, [folders])
-
-  const listLabel = useMemo(() => {
-    if (!listFilter) return '全部任务'
-    if (listFilter === 'uncategorized') return '未分类'
-    const fromList = filteredList.find((task) => task.folder_path)?.folder_path
-    return fromList || folderMap.get(listFilter) || listFilter
-  }, [filteredList, folderMap, listFilter])
-
-  const listTarget = useMemo(() => {
-    if (!listFilter) return '/tasks'
-    if (listFilter === 'uncategorized') return '/tasks?folder=uncategorized'
-    return `/tasks?folder=${encodeURIComponent(listFilter)}`
-  }, [listFilter])
 
   const listSearch = listFilter === 'uncategorized'
     ? '?folder=uncategorized'
@@ -88,15 +68,6 @@ const FileSidebar = ({ listFilter }: FileSidebarProps) => {
         <Typography.Text strong>文件列表</Typography.Text>
       </div>
 
-      {listFilter && (
-        <div className="workspace-filelist__meta">
-          <button type="button" className="workspace-filelist__meta-btn" onClick={() => navigate(listTarget)}>
-            <FolderOutlined className="workspace-filelist__icon" />
-            <Typography.Text type="secondary">{listLabel}</Typography.Text>
-          </button>
-        </div>
-      )}
-
       <div className="workspace-filelist__body">
         {loading && list.length === 0 ? (
           <div className="workspace-filelist__loading">
@@ -118,7 +89,7 @@ const FileSidebar = ({ listFilter }: FileSidebarProps) => {
                   <FileTextOutlined />
                   <div className="workspace-filelist__item-body">
                     <div className="workspace-filelist__item-title">
-                      {item.display_name || item.name || '未命名任务'}
+                      {item.display_name || item.meeting_type || item.name || item.task_id || '未命名任务'}
                     </div>
                     <div className="workspace-filelist__item-time">
                       {item.created_at ? dateFormatter.format(new Date(item.created_at)) : '--'}

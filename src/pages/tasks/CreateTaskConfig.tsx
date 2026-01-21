@@ -49,18 +49,24 @@ const CreateTaskConfig = () => {
       message.warning('请选择提示词模板')
       return
     }
+    const taskName = values.meeting_type?.trim() || uploads[0]?.name?.replace(/\.[^/.]+$/, '') || '通用会议'
     const asr_language = values.asr_languages && values.asr_languages.length > 0 ? values.asr_languages.join('+') : undefined
+    const promptParameters = values.description ? { meeting_description: values.description } : {}
     const payload: CreateTaskRequest = {
-      audio_files: uploads.map((item) => ({
-        file_path: item.file_path,
-        speaker_id: item.speaker_id,
-      })),
+      audio_files: uploads.map((item) => item.file_path),
       file_order: uploads.map((_, index) => index),
-      meeting_type: values.meeting_type,
+      original_filenames: uploads.map((item) => item.original_filename || item.name),
+      meeting_type: taskName,
       output_language: values.output_language,
       asr_language,
       skip_speaker_recognition: values.skip_speaker_recognition,
-      prompt_instance: template ? { template_id: template.template_id, parameters: {} } : undefined,
+      prompt_instance: template
+        ? {
+            template_id: template.template_id,
+            language: values.output_language,
+            parameters: promptParameters,
+          }
+        : undefined,
     }
     try {
       let taskId = ''
@@ -96,8 +102,9 @@ const CreateTaskConfig = () => {
     }
   }
 
+  const defaultName = uploads[0]?.name?.replace(/\.[^/.]+$/, '')
   const initialValues = {
-    meeting_type,
+    meeting_type: meeting_type && meeting_type !== 'general' ? meeting_type : defaultName || '通用会议',
     output_language,
     asr_languages,
     skip_speaker_recognition,

@@ -33,15 +33,17 @@ export const createTemplate = (payload: CreatePromptTemplateRequest, userId?: st
     params: userId ? { user_id: userId } : undefined,
   })
 
-export const updateTemplate = (templateId: string, payload: UpdatePromptTemplateRequest) =>
+export const updateTemplate = (templateId: string, payload: UpdatePromptTemplateRequest, userId?: string) =>
   request<UpdatePromptTemplateResponse>({
     url: `/prompt-templates/${templateId}`,
     method: 'PUT',
     data: payload,
+    params: userId ? { user_id: userId } : undefined,
   })
 
-export const deleteTemplate = (templateId: string) =>
+export const deleteTemplate = (templateId: string, userId?: string) =>
   request<DeletePromptTemplateResponse>({
     url: `/prompt-templates/${templateId}`,
     method: 'DELETE',
+    params: userId ? { user_id: userId } : undefined,
   })

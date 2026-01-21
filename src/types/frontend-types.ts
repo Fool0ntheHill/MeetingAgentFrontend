@@ -50,8 +50,11 @@ export interface PromptInstance {
 }
 
 export interface CreateTaskRequest {
-  audio_files: AudioFile[]
+  audio_files: (AudioFile | string)[]
   file_order?: number[]
+  original_filenames?: string[]
+  meeting_date?: string
+  meeting_time?: string
   meeting_type: string
   asr_language?: string // 默认 "zh-CN+en-US"
   output_language?: string // 默认 "zh-CN"
@@ -81,6 +84,7 @@ export interface TaskDetailResponse {
   meeting_type: string
   audio_files: string[]
   file_order: number[]
+  original_filenames?: string[]
   asr_language: string
   output_language: string
   state: TaskState

@@ -24,3 +24,10 @@ export const regenerateArtifact = (taskId: string, artifactType: string, payload
     method: 'POST',
     data: payload,
   })
+
+export const updateArtifact = (artifactId: string, content: string) =>
+  request<ArtifactDetailResponse>({
+    url: `/artifacts/${artifactId}`,
+    method: 'PUT',
+    data: { content },
+  })

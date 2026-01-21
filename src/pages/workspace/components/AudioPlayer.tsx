@@ -1,6 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import WaveSurfer from 'wavesurfer.js'
 import { Button, Dropdown, Popover, Slider, Spin } from 'antd'
 import {
   CaretRightFilled,
@@ -33,8 +32,7 @@ const JumpIcon = ({ direction }: { direction: 'back' | 'forward' }) => (
 )
 
 const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeUpdate, onReady }, ref) => {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const wavesurfer = useRef<WaveSurfer | null>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
@@ -43,7 +41,8 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    if (!containerRef.current || !url) {
+    const el = audioRef.current
+    if (!el || !url) {
       setIsLoading(false)
       setDuration(0)
       setCurrentTime(0)
@@ -51,68 +50,69 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
     }
 
     setIsLoading(true)
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: '#d9d9d9',
-      progressColor: '#1677ff',
-      cursorColor: '#1677ff',
-      barWidth: 2,
-      barGap: 3,
-      barRadius: 2,
-      height: 48,
-      normalize: true,
-      minPxPerSec: 50,
-      url: url,
-    })
-
-    ws.on('ready', () => {
+    const onLoaded = () => {
+      setDuration(el.duration || 0)
       setIsLoading(false)
-      setDuration(ws.getDuration())
-      ws.setVolume(volume / 100)
       onReady?.()
-    })
-
-    ws.on('audioprocess', (time) => {
+    }
+    const onTime = () => {
+      const time = el.currentTime || 0
       setCurrentTime(time)
       onTimeUpdate?.(time)
-    })
+    }
+    const onPlay = () => setIsPlaying(true)
+    const onPause = () => setIsPlaying(false)
+    const onEnded = () => setIsPlaying(false)
 
-    ws.on('play', () => setIsPlaying(true))
-    ws.on('pause', () => setIsPlaying(false))
-    ws.on('interaction', (time) => {
-      setCurrentTime(time)
-      onTimeUpdate?.(time)
-    })
-    ws.on('finish', () => setIsPlaying(false))
+    el.addEventListener('loadedmetadata', onLoaded)
+    el.addEventListener('timeupdate', onTime)
+    el.addEventListener('play', onPlay)
+    el.addEventListener('pause', onPause)
+    el.addEventListener('ended', onEnded)
 
-    wavesurfer.current = ws
+    el.volume = volume / 100
+    el.playbackRate = playbackRate
 
     return () => {
-      ws.destroy()
+      el.removeEventListener('loadedmetadata', onLoaded)
+      el.removeEventListener('timeupdate', onTime)
+      el.removeEventListener('play', onPlay)
+      el.removeEventListener('pause', onPause)
+      el.removeEventListener('ended', onEnded)
     }
-  }, [url, onReady, onTimeUpdate, volume])
+  }, [url, onReady, onTimeUpdate, volume, playbackRate])
 
   useEffect(() => {
-    wavesurfer.current?.setVolume(volume / 100)
+    if (audioRef.current) {
+      audioRef.current.volume = volume / 100
+    }
   }, [volume])
 
   useImperativeHandle(ref, () => ({
     seekTo: (time: number) => {
-      if (!wavesurfer.current) return
-      wavesurfer.current.setTime(time)
-      wavesurfer.current.play()
+      if (!audioRef.current) return
+      audioRef.current.currentTime = time
+      audioRef.current.play()
     },
-    play: () => wavesurfer.current?.play(),
-    pause: () => wavesurfer.current?.pause(),
+    play: () => audioRef.current?.play(),
+    pause: () => audioRef.current?.pause(),
   }))
 
   const togglePlay = () => {
-    wavesurfer.current?.playPause()
+    const el = audioRef.current
+    if (!el) return
+    if (isPlaying) {
+      el.pause()
+    } else {
+      void el.play()
+    }
   }
 
   const handleSpeedChange = (value: number) => {
     setPlaybackRate(value)
-    wavesurfer.current?.setPlaybackRate(value)
+    if (audioRef.current) {
+      audioRef.current.playbackRate = value
+    }
   }
 
   const formatTime = (seconds: number) => {
@@ -137,7 +137,14 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
               {isPlaying ? <PauseOutlined /> : <CaretRightFilled />}
             </span>
           </Button>
-          <Button type="text" className="workspace-audio__jump" onClick={() => wavesurfer.current?.skip(15)}>
+          <Button
+            type="text"
+            className="workspace-audio__jump"
+            onClick={() => {
+              if (!audioRef.current) return
+              audioRef.current.currentTime = Math.min(duration, (audioRef.current.currentTime || 0) + 15)
+            }}
+          >
             <JumpIcon direction="forward" />
           </Button>
         </div>
@@ -170,13 +177,32 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
       </div>
 
       <div className="workspace-audio__wave">
-        {isLoading && (
+        {isLoading ? (
           <div className="workspace-audio__loading">
             <Spin size="small" />
           </div>
+        ) : (
+          <Slider
+            min={0}
+            max={Math.max(duration, 0.1)}
+            step={0.1}
+            value={Math.min(currentTime, duration || 0)}
+            onChange={(value) => setCurrentTime(value as number)}
+            onAfterChange={(value) => {
+              const time = value as number
+              if (audioRef.current) {
+                audioRef.current.currentTime = time
+                if (!isPlaying) {
+                  void audioRef.current.play()
+                }
+              }
+            }}
+            tooltip={{ formatter: (v) => formatTime(v || 0) }}
+          />
         )}
-        <div ref={containerRef} />
       </div>
+
+      <audio ref={audioRef} src={url} preload="metadata" />
     </div>
   )
 })

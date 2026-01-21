@@ -3,6 +3,7 @@ import { Button, Collapse, Form, Input, Select, Space, Switch, Typography, messa
 import { CheckOutlined, PlusOutlined } from '@ant-design/icons'
 import TemplateSelector from '@/components/TemplateSelector'
 import type { Template } from '@/store/template'
+import { useTemplateStore } from '@/store/template'
 
 export interface CreateTaskFormValues {
   meeting_type: string
@@ -12,13 +13,6 @@ export interface CreateTaskFormValues {
   description?: string
   template_id?: string
 }
-
-const meetingTypeOptions = [
-  { label: '通用会议', value: 'general' },
-  { label: '销售', value: 'sales' },
-  { label: '教育', value: 'education' },
-  { label: '医疗', value: 'medical' },
-]
 
 const outputLanguageOptions = [
   { label: '中文', value: 'zh-CN' },
@@ -35,6 +29,8 @@ const asrLanguageOptions = [
 ]
 
 interface TaskConfigFormProps {
+  meetingTypeLabel?: string
+  meetingTypePlaceholder?: string
   initialValues?: Partial<CreateTaskFormValues>
   onFinish: (values: CreateTaskFormValues) => void
   onValuesChange?: (changed: Partial<CreateTaskFormValues>, all: CreateTaskFormValues) => void
@@ -45,6 +41,8 @@ interface TaskConfigFormProps {
 }
 
 const TaskConfigForm = ({
+  meetingTypeLabel = '任务名称',
+  meetingTypePlaceholder = '默认使用首个录音文件名',
   initialValues,
   onFinish,
   onValuesChange,
@@ -55,6 +53,8 @@ const TaskConfigForm = ({
 }: TaskConfigFormProps) => {
   const [form] = Form.useForm<CreateTaskFormValues>()
   const [templateModal, setTemplateModal] = useState(false)
+  const [defaultApplied, setDefaultApplied] = useState(false)
+  const { defaultTemplateId, getDetail } = useTemplateStore()
   
   // Use local state for template if not controlled/overridden
   const [localTemplate, setLocalTemplate] = useState<Template | null>(null)
@@ -77,6 +77,31 @@ const TaskConfigForm = ({
     message.success(`已选择模板：${tpl.title}`)
   }
 
+  useEffect(() => {
+    if (defaultApplied) return
+    if (!defaultTemplateId) return
+    if (activeTemplate) {
+      setDefaultApplied(true)
+      return
+    }
+    let cancelled = false
+    const applyDefault = async () => {
+      const tpl = await getDetail(defaultTemplateId)
+      if (!tpl || cancelled) return
+      if (onTemplateChange) {
+        onTemplateChange(tpl)
+      } else {
+        setLocalTemplate(tpl)
+      }
+      form.setFieldsValue({ template_id: tpl.template_id })
+      setDefaultApplied(true)
+    }
+    void applyDefault()
+    return () => {
+      cancelled = true
+    }
+  }, [activeTemplate, defaultApplied, defaultTemplateId, form, getDetail, onTemplateChange])
+
   return (
     <>
       <Form
@@ -87,8 +112,8 @@ const TaskConfigForm = ({
         initialValues={initialValues}
       >
         <div className="create-task__config-grid">
-          <Form.Item name="meeting_type" label="会议类型" rules={[{ required: true, message: '请选择会议类型' }]}>
-            <Select options={meetingTypeOptions} />
+          <Form.Item name="meeting_type" label={meetingTypeLabel} rules={[{ required: true, message: '请输入任务名称' }]}>
+            <Input placeholder={meetingTypePlaceholder} maxLength={60} />
           </Form.Item>
           <Form.Item name="output_language" label="输出语言" rules={[{ required: true, message: '请选择输出语言' }]}>
             <Select options={outputLanguageOptions} />

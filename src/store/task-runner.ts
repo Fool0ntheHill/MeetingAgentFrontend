@@ -256,12 +256,18 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
     set((state) => {
       const current = state.tasks[taskId]
       if (!current) return state
+      const nextStatus = payload.status ?? current.status
+      const nextProgress = payload.progress ?? current.progress
+      const nextSteps = payload.steps ?? buildSteps(nextStatus, nextProgress)
       return {
         tasks: {
           ...state.tasks,
           [taskId]: {
             ...current,
             ...payload,
+            status: nextStatus,
+            progress: nextProgress,
+            steps: nextSteps,
             updatedAt: Date.now(),
           },
         },

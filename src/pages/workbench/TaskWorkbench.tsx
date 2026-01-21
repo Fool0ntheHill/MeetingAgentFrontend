@@ -12,27 +12,16 @@ import {
   StopOutlined,
   DeleteOutlined,
   ArrowLeftOutlined,
-  ReloadOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useTaskRunnerStore, type TaskStep } from '@/store/task-runner'
+import { useTaskRunnerStore, type TaskStep, type TaskRunStatus } from '@/store/task-runner'
+import { useTaskStore } from '@/store/task'
+import type { TaskState } from '@/types/frontend-types'
+import { ENV } from '@/config/env'
 import TaskConfigForm, { type CreateTaskFormValues } from '@/components/TaskConfigForm'
 import './task-workbench.css'
 
-const tips = ['正在准备模型资源…', '数据加速处理中…', '稍后即可进入结果区。', '可切换页面，任务会在后台持续运行。']
-
-const formatEta = (seconds: number) => {
-  if (!Number.isFinite(seconds)) return '--'
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.max(0, seconds % 60)
-  return `${mins} 分 ${secs.toString().padStart(2, '0')} 秒`
-}
-
-const formatFinishTime = (seconds: number) => {
-  if (!Number.isFinite(seconds)) return '--'
-  const finish = new Date(Date.now() + seconds * 1000)
-  return finish.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
+const tips = ['正在准备模型资源...', '数据加速处理中...', '稍后即可进入结果区。', '可切换页面，任务会在后台持续运行。']
 
 const getStepIcon = (status: TaskStep['status']) => {
   if (status === 'success') return <CheckCircleFilled style={{ color: '#52c41a' }} />
@@ -45,10 +34,12 @@ const getStepIcon = (status: TaskStep['status']) => {
 const TaskWorkbench = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { tasks, ensureTask, startTask, pauseTask, resumeTask, abortTask, deleteTask } = useTaskRunnerStore()
+  const { tasks, ensureTask, startTask, pauseTask, resumeTask, abortTask, deleteTask, updateFromServer } = useTaskRunnerStore()
+  const { fetchStatus, fetchDetail, currentTask } = useTaskStore()
   const task = id ? tasks[id] : undefined
   const [tip, setTip] = useState(tips[0])
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false)
+  const [nowTs, setNowTs] = useState(() => Date.now())
 
   useEffect(() => {
     if (!id) return
@@ -56,11 +47,46 @@ const TaskWorkbench = () => {
   }, [id, ensureTask])
 
   useEffect(() => {
+    if (!id) return
+    fetchDetail(id)
+  }, [id, fetchDetail])
+  const mapBackendStatus = (state?: TaskState): TaskRunStatus => {
+    if (!state) return 'PENDING'
+    if (state === 'success' || state === 'partial_success') return 'SUCCESS'
+    if (state === 'failed') return 'FAILED'
+    if (state === 'pending' || state === 'queued') return 'PENDING'
+    return 'PROCESSING'
+  }
+
+  useEffect(() => {
     if (!id || !task) return
-    if (task.status === 'PENDING') {
+    if (ENV.ENABLE_MOCK && task.status === 'PENDING') {
       startTask(id)
     }
   }, [id, task, startTask])
+  useEffect(() => {
+    if (!id || ENV.ENABLE_MOCK) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await fetchStatus(id)
+        if (cancelled) return
+        updateFromServer(id, {
+          status: mapBackendStatus(res.state),
+          progress: res.progress ?? 0,
+          etaSeconds: res.estimated_time ?? task?.etaSeconds ?? 0,
+        })
+      } catch {
+        // keep last state on polling errors
+      }
+    }
+    poll()
+    const timer = window.setInterval(poll, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [id, fetchStatus, updateFromServer, task?.etaSeconds])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -78,22 +104,47 @@ const TaskWorkbench = () => {
     )
   }, [task])
 
-  const hintText = task?.status === 'PROCESSING' && currentStep ? `正在${currentStep.title}…` : tip
+  const hintText = task?.status === 'PROCESSING' && currentStep ? `正在${currentStep.title}...` : tip
 
-  const logs = useMemo(() => {
-    if (!task) return []
-    const base = [
-      `任务 ${task.taskId.slice(0, 6)} 已进入 ${task.status} 状态`,
-      currentStep ? `当前阶段：${currentStep.title}` : '等待任务启动',
-    ]
-    if (task.insights.keywords.length > 0) {
-      base.push(`已识别关键词：${task.insights.keywords.join(' / ')}`)
-    }
-    if (task.insights.summarySentences > 0) {
-      base.push(`当前已提取摘要句数：${task.insights.summarySentences} 句`)
-    }
-    return base
-  }, [task, currentStep])
+  const audioDurationSec = useMemo(() => {
+    const detail = currentTask as (typeof currentTask & { duration?: number; audio_duration?: number }) | null
+    const raw = detail?.duration ?? detail?.audio_duration ?? 0
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
+  }, [currentTask])
+
+  const taskStartAt = useMemo(() => {
+    const createdAt = currentTask?.created_at
+    if (!createdAt) return null
+    const ts = Date.parse(createdAt)
+    return Number.isNaN(ts) ? null : ts
+  }, [currentTask?.created_at])
+
+  const expectedSeconds = useMemo(() => Math.max(0, Math.round(audioDurationSec * 0.25)), [audioDurationSec])
+
+  useEffect(() => {
+    if (!taskStartAt || !expectedSeconds) return
+    if (task?.status !== 'PROCESSING') return
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [task?.status, taskStartAt, expectedSeconds])
+
+  const remainingSeconds = useMemo(() => {
+    if (!taskStartAt || !expectedSeconds) return 0
+    const elapsed = Math.floor((nowTs - taskStartAt) / 1000)
+    return Math.max(0, expectedSeconds - elapsed)
+  }, [taskStartAt, expectedSeconds, nowTs])
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.max(0, seconds % 60)
+    return `${mins}:${String(secs).padStart(2, '0')}`
+  }
+
+  const formatTime = (timestamp: number) =>
+    new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+
+  const expectedFinishTime =
+    taskStartAt && expectedSeconds > 0 ? formatTime(taskStartAt + expectedSeconds * 1000) : '--:--'
 
   const getStepDetail = (step: TaskStep, index: number) => {
     const fileName = task?.fileNames?.[index] || task?.fileNames?.[0] || '音频片段'
@@ -115,7 +166,8 @@ const TaskWorkbench = () => {
   const canPause = task?.status === 'PROCESSING'
   const canResume = task?.status === 'PAUSED'
   const showAbort = task?.status === 'PROCESSING' || task?.status === 'PAUSED' || task?.status === 'PENDING'
-  const showDelete = task?.status && task.status !== 'PROCESSING'
+  const showResult = task?.status === 'SUCCESS'
+  const showDelete = task?.status && task.status !== 'PROCESSING' && task.status !== 'SUCCESS'
 
   const handleAbort = () => {
     if (!id) return
@@ -151,7 +203,7 @@ const TaskWorkbench = () => {
       message.success({ content: '任务已重新提交', key: 'regenerate' })
       setConfigDrawerOpen(false)
       // Mock restarting the task
-      if (id) startTask(id) 
+      if (id && ENV.ENABLE_MOCK) startTask(id)
     }, 1000)
   }
 
@@ -172,14 +224,11 @@ const TaskWorkbench = () => {
         <div className="workbench__header">
           <div>
             <Typography.Title level={3} style={{ marginBottom: 4 }}>
-              任务处理工作台
+              任务进度
             </Typography.Title>
-            <Typography.Text type="secondary">{task?.title || '正在加载任务信息…'}</Typography.Text>
+            <Typography.Text type="secondary">{task?.title || '正在加载任务信息...'}</Typography.Text>
           </div>
           <Space>
-            <Button onClick={() => setConfigDrawerOpen(true)} icon={<ReloadOutlined />}>
-              重新生成
-            </Button>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
               返回列表 / 后台运行
             </Button>
@@ -206,6 +255,11 @@ const TaskWorkbench = () => {
               {showAbort && (
                 <Button danger icon={<StopOutlined />} onClick={handleAbort}>
                   中止
+                </Button>
+              )}
+              {showResult && (
+                <Button type="primary" icon={<ArrowLeftOutlined />} onClick={() => id && navigate(`/workspace/${id}`)}>
+                  查看结果
                 </Button>
               )}
               {showDelete && (
@@ -235,7 +289,7 @@ const TaskWorkbench = () => {
                         {step.status === 'success'
                           ? '已完成'
                           : step.status === 'processing'
-                            ? '执行中…'
+                            ? '执行中...'
                             : step.status === 'paused'
                               ? '已暂停'
                               : step.status === 'failed'
@@ -263,6 +317,17 @@ const TaskWorkbench = () => {
               bordered={false}
             >
               <div className="workbench__info-section">
+                <Typography.Text type="secondary">进度预估</Typography.Text>
+                <div className="workbench__info-item">
+                  <Typography.Text type="secondary">预期完成时间</Typography.Text>
+                  <Typography.Text>{expectedFinishTime}</Typography.Text>
+                </div>
+                <div className="workbench__info-item">
+                  <Typography.Text type="secondary">剩余时间</Typography.Text>
+                  <Typography.Text>{expectedSeconds ? formatDuration(remainingSeconds) : '--:--'}</Typography.Text>
+                </div>
+              </div>
+              <div className="workbench__info-section">
                 <Typography.Text type="secondary">任务配置快照</Typography.Text>
                 <div className="workbench__info-item">
                   <Typography.Text type="secondary">模板</Typography.Text>
@@ -270,52 +335,18 @@ const TaskWorkbench = () => {
                 </div>
                 <div className="workbench__info-item">
                   <Typography.Text type="secondary">输出语言</Typography.Text>
-                  <Typography.Text>{task?.config.outputLanguage || '—'}</Typography.Text>
+                  <Typography.Text>{task?.config.outputLanguage || '--'}</Typography.Text>
                 </div>
                 <div className="workbench__info-item">
                   <Typography.Text type="secondary">识别语言</Typography.Text>
                   <Typography.Text>{task?.config.asrLanguages?.length ? task.config.asrLanguages.join(' / ') : '自动'}</Typography.Text>
                 </div>
-                <div className="workbench__info-item">
-                  <Typography.Text type="secondary">模型版本</Typography.Text>
-                  <Typography.Text>{task?.config.modelVersion || '—'}</Typography.Text>
-                </div>
               </div>
-
-              <div className="workbench__info-section">
-                <Typography.Text type="secondary">实时产出预览</Typography.Text>
-                <div className="workbench__info-item">
-                  <Typography.Text type="secondary">已识别关键词</Typography.Text>
-                  <Typography.Text>
-                    {task?.insights.keywords?.length ? task.insights.keywords.join(' / ') : '暂未识别'}
-                  </Typography.Text>
-                </div>
-                <div className="workbench__info-item">
-                  <Typography.Text type="secondary">摘要句数</Typography.Text>
-                  <Typography.Text>{task?.insights.summarySentences ?? 0} 句</Typography.Text>
-                </div>
-              </div>
-
-              <div className="workbench__info-item">
-                <Typography.Text type="secondary">预计完成时刻</Typography.Text>
-                <Typography.Text>{formatFinishTime(task?.etaSeconds || 0)} 完成</Typography.Text>
-              </div>
-              <Typography.Text type="secondary" className="workbench__info-sub">
-                剩余约 {formatEta(task?.etaSeconds || 0)}
-              </Typography.Text>
             </Card>
           </Col>
         </Row>
 
-        <Card title="实时日志流" className="workbench__logs" bordered={false}>
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {logs.map((line, index) => (
-              <Typography.Text key={`${line}-${index}`} type="secondary">
-                {line}
-              </Typography.Text>
-            ))}
-          </Space>
-        </Card>
+        
       </div>
       <Drawer
         title="重新生成任务配置"
