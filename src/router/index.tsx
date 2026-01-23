@@ -9,7 +9,6 @@ const Login = lazy(() => import('@/pages/Login'))
 const Home = lazy(() => import('@/pages/home/Home'))
 const TaskList = lazy(() => import('@/pages/tasks/TaskList'))
 const CreateTask = lazy(() => import('@/pages/tasks/CreateTask'))
-const CreateTaskSort = lazy(() => import('@/pages/tasks/CreateTaskSort'))
 const CreateTaskConfig = lazy(() => import('@/pages/tasks/CreateTaskConfig'))
 const TaskDetailRedirect = lazy(() => import('@/pages/tasks/TaskDetailRedirect'))
 const TaskWorkbench = lazy(() => import('@/pages/workbench/TaskWorkbench'))
@@ -57,7 +56,6 @@ export const router = createBrowserRouter([
               { path: 'folders', element: withSuspense(<TaskFolders />) },
               { path: 'trash', element: withSuspense(<TaskList />) },
               { path: 'create', element: withSuspense(<CreateTask />) },
-              { path: 'create/sort', element: withSuspense(<CreateTaskSort />) },
               { path: 'create/config', element: withSuspense(<CreateTaskConfig />) },
               { path: ':id/workbench', element: withSuspense(<TaskWorkbench />) },
               { path: ':id', element: withSuspense(<TaskDetailRedirect />) },

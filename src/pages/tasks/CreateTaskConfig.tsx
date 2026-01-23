@@ -52,10 +52,12 @@ const CreateTaskConfig = () => {
     const taskName = values.meeting_type?.trim() || uploads[0]?.name?.replace(/\.[^/.]+$/, '') || '通用会议'
     const asr_language = values.asr_languages && values.asr_languages.length > 0 ? values.asr_languages.join('+') : undefined
     const promptParameters = values.description ? { meeting_description: values.description } : {}
+    const totalDuration = uploads.reduce((sum, item) => sum + (item.duration ?? 0), 0)
     const payload: CreateTaskRequest = {
       audio_files: uploads.map((item) => item.file_path),
       file_order: uploads.map((_, index) => index),
       original_filenames: uploads.map((item) => item.original_filename || item.name),
+      audio_duration: totalDuration > 0 ? totalDuration : undefined,
       meeting_type: taskName,
       output_language: values.output_language,
       asr_language,
@@ -86,6 +88,7 @@ const CreateTaskConfig = () => {
       ensureTask(taskId, {
         title: template?.title ? `处理任务 · ${template.title}` : `任务 ${taskId.slice(0, 6)}`,
         fileNames: uploads.map((item) => item.name),
+        duration: totalDuration > 0 ? totalDuration : undefined,
         config: {
           templateName: template?.title,
           meetingType: values.meeting_type,
@@ -121,7 +124,7 @@ const CreateTaskConfig = () => {
         <Typography.Paragraph type="secondary" className="create-task__subtitle">
           模板、语言与高级设置可在此完成。确认模板后将返回本页显示选择结果。
         </Typography.Paragraph>
-        <CreateTaskSteps current={2} />
+        <CreateTaskSteps current={1} />
         <Card className="create-task__step-card" bordered={false}>
           <TaskConfigForm
             initialValues={initialValues}
@@ -138,8 +141,8 @@ const CreateTaskConfig = () => {
             templateOverride={template}
             onTemplateChange={setTemplate}
             renderExtraActions={() => (
-              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks/create/sort')}>
-                上一步：排序
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks/create')}>
+                上一步：上传与排序
               </Button>
             )}
           />

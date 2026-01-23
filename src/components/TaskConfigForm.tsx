@@ -9,7 +9,7 @@ export interface CreateTaskFormValues {
   meeting_type: string
   output_language: string
   asr_languages?: string[]
-  skip_speaker_recognition?: boolean
+  meeting_attendees?: string
   description?: string
   template_id?: string
 }
@@ -55,6 +55,8 @@ const TaskConfigForm = ({
   const [templateModal, setTemplateModal] = useState(false)
   const [defaultApplied, setDefaultApplied] = useState(false)
   const { defaultTemplateId, getDetail } = useTemplateStore()
+  const [customPrompt, setCustomPrompt] = useState<string | null>(null)
+  const [templateOriginalBody, setTemplateOriginalBody] = useState<string | null>(null)
   
   // Use local state for template if not controlled/overridden
   const [localTemplate, setLocalTemplate] = useState<Template | null>(null)
@@ -66,12 +68,14 @@ const TaskConfigForm = ({
     }
   }, [initialValues, form])
 
-  const handleTemplateApply = (tpl: Template) => {
+  const handleTemplateApply = (tpl: Template, originalBody?: string | null) => {
     if (onTemplateChange) {
       onTemplateChange(tpl)
     } else {
       setLocalTemplate(tpl)
     }
+    setTemplateOriginalBody(originalBody ?? tpl.prompt_body ?? null)
+    setCustomPrompt(tpl.prompt_body || null)
     form.setFieldsValue({ template_id: tpl.template_id })
     setTemplateModal(false)
     message.success(`已选择模板：${tpl.title}`)
@@ -93,6 +97,8 @@ const TaskConfigForm = ({
       } else {
         setLocalTemplate(tpl)
       }
+      setTemplateOriginalBody(tpl.prompt_body || null)
+      setCustomPrompt(tpl.prompt_body || null)
       form.setFieldsValue({ template_id: tpl.template_id })
       setDefaultApplied(true)
     }
@@ -127,7 +133,22 @@ const TaskConfigForm = ({
             {activeTemplate && (
               <div className="template-selected">
                 <Typography.Text>已选：</Typography.Text>
-                <Typography.Text strong>{activeTemplate.title}</Typography.Text>
+                <Typography.Text strong>
+                  {activeTemplate.title}
+                  {customPrompt && templateOriginalBody !== null && customPrompt !== templateOriginalBody ? '（已修改）' : ''}
+                </Typography.Text>
+                {customPrompt && templateOriginalBody !== null && customPrompt !== templateOriginalBody && (
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      setCustomPrompt(templateOriginalBody)
+                      message.success('已恢复模板默认内容')
+                    }}
+                  >
+                    恢复默认
+                  </Button>
+                )}
               </div>
             )}
           </Space>
@@ -157,8 +178,8 @@ const TaskConfigForm = ({
                       options={asrLanguageOptions}
                     />
                   </Form.Item>
-                  <Form.Item name="skip_speaker_recognition" label="跳过说话人识别" valuePropName="checked">
-                    <Switch />
+                  <Form.Item name="meeting_attendees" label="会议人数（可选）">
+                    <Input placeholder="例如：3人，或直接填写人数" />
                   </Form.Item>
                   <Form.Item label="会议描述（可选）" name="description">
                     <Input.TextArea placeholder="将作为补充上下文传给模型" rows={3} />
@@ -177,8 +198,14 @@ const TaskConfigForm = ({
       </Form>
       <TemplateSelector
         open={templateModal}
+        initialTemplate={activeTemplate ?? undefined}
+        initialContent={customPrompt ?? undefined}
         onClose={() => setTemplateModal(false)}
-        onApply={handleTemplateApply}
+        onApply={({ template, prompt, description, originalPrompt }) => {
+          handleTemplateApply({ ...template, prompt_body: prompt, description }, originalPrompt ?? template.prompt_body ?? null)
+          setTemplateOriginalBody(originalPrompt ?? template.prompt_body ?? null)
+          setCustomPrompt(prompt)
+        }}
       />
     </>
   )

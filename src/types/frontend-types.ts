@@ -73,7 +73,12 @@ export interface TaskStatusResponse {
   state: TaskState
   progress: number // 0-100
   estimated_time?: number // 秒
+  audio_duration?: number // 秒
+  asr_language?: string
+  error_code?: string
+  error_message?: string
   error_details?: string
+  retryable?: boolean
   updated_at: string
 }
 
@@ -89,7 +94,11 @@ export interface TaskDetailResponse {
   output_language: string
   state: TaskState
   progress: number
+  audio_duration?: number
+  error_code?: string
+  error_message?: string
   error_details?: string
+  retryable?: boolean
   created_at: string
   updated_at: string
   completed_at?: string

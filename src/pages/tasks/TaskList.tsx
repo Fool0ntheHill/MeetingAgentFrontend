@@ -135,7 +135,13 @@ const TaskList = () => {
   const handleRename = (ids: string[]) => {
     const firstId = ids[0]
     const current = effectiveList.find((t) => t.task_id === firstId)
-    let value = (current as { display_name?: string } | undefined)?.display_name || current?.task_id || ''
+    const currentName =
+      (current as { name?: string } | undefined)?.name ||
+      (current as { display_name?: string } | undefined)?.display_name ||
+      (current as { meeting_type?: string } | undefined)?.meeting_type ||
+      current?.task_id ||
+      ''
+    let value = currentName
     Modal.confirm({
       title: ids.length > 1 ? '重命名（仅首个）' : '重命名',
       content: <Input defaultValue={value} onChange={(e) => (value = e.target.value)} />,
@@ -194,8 +200,19 @@ const TaskList = () => {
           await batchDeleteTasks(ids)
           message.success('已移至回收站')
           clearSelection()
-          void fetchList({ limit: 200, offset: 0, include_deleted: false })
-          void fetchTrash({ limit: 200, offset: 0 })
+          const idSet = new Set(ids)
+          useTaskStore.setState((state) => {
+            const nextList = state.list.filter((t) => !idSet.has(t.task_id))
+            return {
+              list: nextList,
+              total: Math.max(0, state.total - ids.length),
+              trashTotal: state.trashTotal + ids.length,
+            }
+          })
+          await Promise.all([
+            fetchList({ limit: 200, offset: 0, include_deleted: false }),
+            fetchTrash({ limit: 200, offset: 0 }),
+          ])
         } catch {
           clearSelection()
           message.error('移至回收站失败，请稍后重试')
@@ -234,7 +251,16 @@ const TaskList = () => {
           await Promise.all(ids.map((id) => deleteTaskPermanent(id)))
           message.success('已删除')
           clearSelection()
-          await fetchTrash({ limit: 200, offset: 0 })
+          // 乐观更新侧边栏计数与本地列表
+          const idSet = new Set(ids)
+          useTaskStore.setState((state) => ({
+            trash: state.trash.filter((t) => !idSet.has(t.task_id)),
+            trashTotal: Math.max(0, state.trashTotal - ids.length),
+          }))
+          await Promise.all([
+            fetchTrash({ limit: 200, offset: 0 }),
+            fetchList({ limit: 200, offset: 0, include_deleted: false }),
+          ])
         } catch {
           message.error('删除失败，请稍后重试')
         }
@@ -251,7 +277,7 @@ const TaskList = () => {
       : [
           { key: 'rename', icon: <EditOutlined />, label: '重命名' },
           { key: 'move', icon: <FolderOpenOutlined />, label: '移动到' },
-          { key: 'delete', icon: <DeleteOutlined />, label: '移至回收站' },
+          { key: 'delete', icon: <DeleteOutlined />, label: '移至回收站', danger: true },
         ],
     onClick: ({ key, domEvent }) => {
       domEvent?.stopPropagation()
@@ -527,7 +553,7 @@ const TaskList = () => {
               } else {
                 setPageByKey((prev) => ({ ...prev, [listKey]: nextPage }))
               }
-              clearSelection()
+              // 移除 clearSelection()，保持选中状态跨页
             }}
           />
         </div>

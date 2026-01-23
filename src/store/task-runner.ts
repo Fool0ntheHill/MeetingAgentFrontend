@@ -27,6 +27,10 @@ export interface TaskRunInfo {
   taskId: string
   title: string
   status: TaskRunStatus
+  /**
+   * 后端返回的原始状态（pending/transcribing/...），用于映射阶段
+   */
+  phase?: string
   progress: number
   steps: TaskStep[]
   fileNames: string[]
@@ -51,16 +55,32 @@ interface TaskRunnerState {
   updateFromServer: (taskId: string, payload: Partial<TaskRunInfo>) => void
 }
 
-const STEP_TITLES = ['解析音频', '降噪与分段', '语音转写', '说话人识别', '生成纪要']
+const STEP_TITLES = ['任务队列排序', '会议录音转写', '说话人识别', '声纹识别修正', '生成纪要']
 const TOTAL_SECONDS = 240
 const KEYWORD_POOL = ['项目评审', '预算', '上线时间', '风险', '里程碑', '资源排期']
 
 const timers = new Map<string, number>()
 
-const buildSteps = (status: TaskRunStatus, progress: number): TaskStep[] => {
-  const totalSteps = STEP_TITLES.length
-  const stepSize = 100 / totalSteps
-  const currentIndex = Math.min(totalSteps - 1, Math.floor(progress / stepSize))
+const resolveStageIndex = (phase?: string, progress?: number) => {
+  const normalized = (phase ?? '').toLowerCase()
+  if (['pending', 'queued'].includes(normalized)) return 0
+  // 后端 running 表示已开始处理，视为进入转写阶段
+  if (normalized === 'running') return 1
+  if (normalized === 'transcribing') return 1
+  if (normalized === 'identifying') return 2
+  if (normalized === 'correcting') return 3
+  if (normalized === 'summarizing' || normalized === 'success') return 4
+  if (typeof progress === 'number') {
+    if (progress >= 70) return 4
+    if (progress >= 60) return 3
+    if (progress >= 40) return 2
+    if (progress > 0) return 1
+  }
+  return 0
+}
+
+const buildSteps = (status: TaskRunStatus, progress: number, phase?: string): TaskStep[] => {
+  const currentIndex = resolveStageIndex(phase, progress)
   return STEP_TITLES.map((title, index) => {
     if (status === 'SUCCESS') return { id: `${index}`, title, status: 'success' }
     if (status === 'FAILED') {
@@ -73,7 +93,7 @@ const buildSteps = (status: TaskRunStatus, progress: number): TaskStep[] => {
       if (index === currentIndex) return { id: `${index}`, title, status: 'paused' }
       return { id: `${index}`, title, status: 'pending' }
     }
-    if (status === 'PROCESSING') {
+    if (status === 'PROCESSING' || status === 'PENDING') {
       if (index < currentIndex) return { id: `${index}`, title, status: 'success' }
       if (index === currentIndex) return { id: `${index}`, title, status: 'processing' }
       return { id: `${index}`, title, status: 'pending' }
@@ -97,6 +117,7 @@ const makeTask = (taskId: string, meta?: Partial<Pick<TaskRunInfo, 'title' | 'fi
     taskId,
     title,
     status: 'PENDING',
+    phase: 'pending',
     progress: 0,
     steps: buildSteps('PENDING', 0),
     fileNames,
@@ -105,7 +126,7 @@ const makeTask = (taskId: string, meta?: Partial<Pick<TaskRunInfo, 'title' | 'fi
       keywords: [],
       summarySentences: 0,
     },
-    etaSeconds: TOTAL_SECONDS,
+    etaSeconds: 0,
     resourceUsage: {
       cpu: 18 + Math.round(Math.random() * 22),
       memory: 1.1 + Math.round(Math.random() * 9) / 10,
@@ -174,7 +195,7 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
         [taskId]: {
           ...task,
           status: 'PROCESSING',
-          steps: buildSteps('PROCESSING', task.progress),
+          steps: buildSteps('PROCESSING', task.progress, task.phase),
           insights: buildInsights(task.progress),
           updatedAt: Date.now(),
         },
@@ -194,7 +215,7 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
             ...current,
             status: nextStatus,
             progress: nextProgress,
-            steps: buildSteps(nextStatus, nextProgress),
+            steps: buildSteps(nextStatus, nextProgress, current.phase),
             insights,
             etaSeconds: Math.max(0, Math.round(((100 - nextProgress) / 100) * TOTAL_SECONDS)),
             updatedAt: Date.now(),
@@ -217,7 +238,7 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
         [taskId]: {
           ...task,
           status: 'PAUSED',
-          steps: buildSteps('PAUSED', task.progress),
+          steps: buildSteps('PAUSED', task.progress, task.phase),
           updatedAt: Date.now(),
         },
       },
@@ -238,7 +259,7 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
         [taskId]: {
           ...task,
           status: 'FAILED',
-          steps: buildSteps('FAILED', task.progress),
+          steps: buildSteps('FAILED', task.progress, task.phase),
           updatedAt: Date.now(),
         },
       },
@@ -258,7 +279,8 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
       if (!current) return state
       const nextStatus = payload.status ?? current.status
       const nextProgress = payload.progress ?? current.progress
-      const nextSteps = payload.steps ?? buildSteps(nextStatus, nextProgress)
+      const nextPhase = payload.phase ?? current.phase
+      const nextSteps = payload.steps ?? buildSteps(nextStatus, nextProgress, nextPhase)
       return {
         tasks: {
           ...state.tasks,
@@ -267,6 +289,7 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
             ...payload,
             status: nextStatus,
             progress: nextProgress,
+            phase: nextPhase,
             steps: nextSteps,
             updatedAt: Date.now(),
           },

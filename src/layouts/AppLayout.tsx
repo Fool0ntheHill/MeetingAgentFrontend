@@ -19,9 +19,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
-import TaskFloatingWidget from '@/components/TaskFloatingWidget'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { listTasks } from '@/api/tasks'
 // logo 暂时隐藏
 
 const { Sider, Content } = Layout
@@ -59,11 +57,6 @@ const AppLayout = () => {
   const [confirmDelete, setConfirmDelete] = useState<FlatFolder | null>(null)
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null)
   const [plusHover, setPlusHover] = useState(false)
-  const [navCounts, setNavCounts] = useState<{ total: number; uncat: number; folderTags: FlatFolder[] }>({
-    total: 0,
-    uncat: 0,
-    folderTags: [],
-  })
   const [form] = Form.useForm<Pick<FlatFolder, 'name'>>()
 
   useEffect(() => {
@@ -98,77 +91,27 @@ const AppLayout = () => {
 
   const { totalCount, uncatCount, folderTags } = useMemo(() => {
     const folderList: StoredFolder[] = Array.isArray(folders) ? folders : []
-    const total = navCounts.total || taskList.length
-    const uncat =
-      navCounts.uncat ||
-      taskList.filter((t) => {
-        const folderId = (t as { folder_id?: string }).folder_id
-        return !folderId
-      }).length
+    const total = taskList.length
+    const uncat = taskList.filter((t) => {
+      const folderId = (t as { folder_id?: string }).folder_id
+      return !folderId
+    }).length
     const map = new Map<string, FlatFolder>()
     folderList.forEach((folder) => {
       const folderId = folder.folder_id ?? folder.id ?? ''
       if (!folderId) return
       map.set(folderId, { id: folderId, name: folder.name, count: 0 })
     })
-    ;(navCounts.folderTags.length > 0 ? navCounts.folderTags : []).forEach((tag) => {
-      if (map.has(tag.id)) {
-        map.set(tag.id, { ...map.get(tag.id)!, count: tag.count })
+    taskList.forEach((t) => {
+      const folderId = (t as { folder_id?: string }).folder_id
+      if (!folderId) return
+      const prev = map.get(folderId)
+      if (prev) {
+        prev.count += 1
       }
     })
-    if (navCounts.folderTags.length === 0) {
-      taskList.forEach((t) => {
-        const folderId = (t as { folder_id?: string }).folder_id
-        if (!folderId) return
-        const prev = map.get(folderId)
-        if (prev) {
-          prev.count += 1
-        }
-      })
-    }
     return { totalCount: total, uncatCount: uncat, folderTags: Array.from(map.values()) }
-  }, [taskList, folders, navCounts])
-
-  useEffect(() => {
-    const fetchNavCounts = async () => {
-      try {
-        const res = await listTasks({ limit: 500, offset: 0, include_deleted: false })
-        const items =
-          Array.isArray((res as { items?: unknown[] })?.items) && (res as { items: unknown[] }).items
-            ? (res as { items: Record<string, unknown>[] }).items
-            : Array.isArray(res)
-              ? (res as Record<string, unknown>[])
-              : []
-        const total = items.length
-        const folderMap = new Map<string, number>()
-        items.forEach((item) => {
-          const folderId =
-            (item.folder_id as string | undefined) ??
-            ((item.folder as { id?: string } | undefined)?.id ?? (item.folder as string | undefined))
-          if (typeof folderId === 'string' && folderId.trim()) {
-            folderMap.set(folderId, (folderMap.get(folderId) ?? 0) + 1)
-          }
-        })
-        const tags: FlatFolder[] = (Array.isArray(folders) ? folders : [])
-          .map((folder) => {
-            const id = folder.folder_id ?? folder.id ?? ''
-            if (!id) return null
-            return { id, name: folder.name, count: folderMap.get(id) ?? 0 }
-          })
-          .filter((v): v is FlatFolder => Boolean(v))
-        const uncat = items.filter((item) => {
-          const folderId =
-            (item.folder_id as string | undefined) ??
-            ((item.folder as { id?: string } | undefined)?.id ?? (item.folder as string | undefined))
-          return !folderId
-        }).length
-        setNavCounts({ total, uncat, folderTags: tags })
-      } catch {
-        // ignore
-      }
-    }
-    void fetchNavCounts()
-  }, [folders])
+  }, [taskList, folders])
 
   const openCreate = () => {
     setFoldersOpen(true)
@@ -533,7 +476,6 @@ const AppLayout = () => {
           </Content>
         </Layout>
       </Layout>
-      <TaskFloatingWidget />
 
       <Modal
         title={editingFolder ? '重命名文件夹' : '新建文件夹'}
@@ -575,7 +517,7 @@ const AppLayout = () => {
         okButtonProps={{ danger: true }}
       >
         <Typography.Paragraph style={{ marginBottom: 0 }}>
-          此文件夹将被永久删除，无法恢复。文件夹中的文件会移至回收站，你可以在回收站中恢复它们。
+          此文件夹将被永久删除，无法恢复。文件夹中的任务会移至未分类，请在任务列表中查看。
         </Typography.Paragraph>
       </Modal>
     </>

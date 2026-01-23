@@ -41,6 +41,10 @@ export const getTaskStatus = (taskId: string) =>
   request<TaskStatusResponse>({
     url: `/tasks/${taskId}/status`,
     method: 'GET',
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
   })
 
 export interface TranscriptParagraph {
