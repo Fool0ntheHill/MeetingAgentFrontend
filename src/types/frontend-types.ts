@@ -47,6 +47,8 @@ export interface PromptInstance {
   template_id: string
   language?: string
   parameters?: Record<string, any>
+  prompt_text?: string
+  custom_instructions?: string
 }
 
 export interface CreateTaskRequest {
@@ -210,6 +212,12 @@ export interface GenerateArtifactResponse {
   version: number
   content: Record<string, any>
   message: string
+}
+
+export interface DeleteArtifactResponse {
+  success: boolean
+  message: string
+  artifact_id: string
 }
 
 // ============================================================================

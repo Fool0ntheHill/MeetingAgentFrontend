@@ -21,7 +21,7 @@ import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
 import { useArtifactStore } from '@/store/artifact'
 import { correctSpeakers, correctTranscript } from '@/api/tasks'
-import { updateArtifact } from '@/api/artifacts'
+import { updateArtifact, deleteArtifact } from '@/api/artifacts'
 import type VditorType from 'vditor'
 import { useTemplateStore } from '@/store/template'
 import { useAuthStore } from '@/store/auth'
@@ -36,6 +36,17 @@ import AudioPlayer, { type AudioPlayerRef } from './components/AudioPlayer'
 import TranscriptEditor from './components/TranscriptEditor'
 import ActionFooter from './components/ActionFooter'
 import './workspace.css'
+
+const PROMPT_OVERRIDE_KEY = 'artifact_prompt_overrides'
+
+type PromptOverride = {
+  prompt_body: string
+  title?: string
+  description?: string
+  template_id?: string
+}
+
+type ConfigMode = 'create' | 'regenerate'
 
 const renderMinutes = (raw: Record<string, unknown> | Array<Record<string, unknown>>) => {
   // 已在 store 层优先解析 data.content（markdown），此处只兜底旧格式
@@ -147,7 +158,15 @@ const Workspace = () => {
   const { id } = useParams<{ id: string }>()
   const { username, userId } = useAuthStore()
   const { fetchDetail, currentTask, fetchTranscript, transcript } = useTaskStore()
-  const { fetchList, fetchDetail: fetchArtifactDetail, list, parsedContent, regenerate } = useArtifactStore()
+  const {
+    fetchList,
+    fetchDetail: fetchArtifactDetail,
+    list,
+    parsedContentById,
+    currentArtifactId,
+    regenerate,
+    current: currentArtifactDetail,
+  } = useArtifactStore()
   const { folders, fetch: fetchFolders } = useFolderStore()
   const { getDetail: getTemplateDetail, create: createTemplate, templates } = useTemplateStore()
 
@@ -173,6 +192,15 @@ const Workspace = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const [artifactNameOverrides, setArtifactNameOverrides] = useState<Record<string, string>>({})
+  const [promptOverrides, setPromptOverrides] = useState<Record<string, PromptOverride>>(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      return JSON.parse(window.localStorage.getItem(PROMPT_OVERRIDE_KEY) || '{}') as Record<string, PromptOverride>
+    } catch {
+      return {}
+    }
+  })
+  const [configMode, setConfigMode] = useState<ConfigMode>('regenerate')
   const [hiddenArtifacts, setHiddenArtifacts] = useState<Set<string>>(new Set())
   const [syncedArtifacts, setSyncedArtifacts] = useState<Set<string>>(new Set())
   const [activeEditor, setActiveEditor] = useState<'transcript' | 'artifact' | null>(null)
@@ -187,6 +215,37 @@ const Workspace = () => {
   const reviewContentRef = useRef<HTMLDivElement>(null)
   const reviewOutlineRef = useRef<HTMLDivElement>(null)
   const vditorRef = useRef<VditorType | null>(null)
+  const resolvePromptTitle = useCallback(
+    (tplId?: string, metaTitle?: string, edited?: boolean) => {
+      const found = tplId ? templates.find((tpl) => tpl.template_id === tplId) : null
+      const base =
+        metaTitle ||
+        found?.title ||
+        (tplId === '__blank__' ? '临时空白模板' : tplId || '临时提示词')
+      return edited ? `${base}（修改版）` : base
+    },
+    [templates]
+  )
+
+  const syncPromptOverride = useCallback(
+    (artifactId: string, artifactData: any) => {
+      const metaPrompt = (artifactData?.metadata as any)?.prompt
+      const promptText =
+        (metaPrompt?.prompt_text as string | undefined) ??
+        (artifactData?.prompt_instance?.prompt_text as string | undefined)
+      if (!promptText) return
+      setPromptOverrides((prev) => ({
+        ...prev,
+        [artifactId]: {
+          prompt_body: String(promptText),
+          title: metaPrompt?.template_id || metaPrompt?.title || '临时提示词',
+          description: metaPrompt?.description || '',
+          template_id: metaPrompt?.template_id || artifactData?.prompt_instance?.template_id,
+        },
+      }))
+    },
+    []
+  )
 
   useEffect(() => {
     // 切换任务时重置当前 artifact 相关状态，避免串任务
@@ -205,6 +264,15 @@ const Workspace = () => {
     fetchTranscript(id)
     void fetchList(id)
   }, [id, fetchDetail, fetchTranscript, fetchList])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(PROMPT_OVERRIDE_KEY, JSON.stringify(promptOverrides))
+    } catch {
+      // ignore
+    }
+  }, [promptOverrides])
 
   useEffect(() => {
     if (folders.length === 0) {
@@ -231,9 +299,10 @@ const Workspace = () => {
   }, [transcript, activeArtifact])
 
   useEffect(() => {
-    if (!parsedContent || !activeArtifact) return
+    const parsed = activeArtifact ? parsedContentById[activeArtifact] : null
+    if (!parsed || !activeArtifact) return
     if (syncedArtifacts.has(activeArtifact)) return
-    const next = resolveMarkdown(parsedContent)
+    const next = resolveMarkdown(parsed)
     setMarkdownByArtifact((prev) => {
       if (prev[activeArtifact] === next) return prev
       return { ...prev, [activeArtifact]: next }
@@ -245,7 +314,7 @@ const Workspace = () => {
     })
     setIsDirty(false)
     setIsConfirmed(false)
-  }, [parsedContent, activeArtifact, syncedArtifacts])
+  }, [parsedContentById, activeArtifact, syncedArtifacts])
 
   useEffect(() => {
     if (!activeArtifact) return
@@ -254,7 +323,13 @@ const Workspace = () => {
 
   const artifactTabs = useMemo(() => {
     if (!list) return []
-    const entries = Object.values(list.artifacts_by_type).flat()
+    const entries = Object.values(list.artifacts_by_type)
+      .flat()
+      .sort((a, b) => {
+        if (a.artifact_type !== b.artifact_type) return a.artifact_type.localeCompare(b.artifact_type)
+        if (a.version !== b.version) return a.version - b.version
+        return a.artifact_id.localeCompare(b.artifact_id)
+      })
     const filtered = entries.filter((item) => {
       const taskId = (item as { task_id?: string }).task_id
       if (!taskId) return true
@@ -262,10 +337,17 @@ const Workspace = () => {
     })
     const visible = filtered.filter((item) => !hiddenArtifacts.has(item.artifact_id))
     return visible.map((item) => {
-      const isDefaultMinutes = item.artifact_type === 'meeting_minutes' && item.version === 1
-      const baseName =
-        artifactNameOverrides[item.artifact_id] || (item.artifact_type === 'meeting_minutes' ? '纪要' : item.artifact_type)
-      const label = isDefaultMinutes ? baseName : `${baseName} v${item.version}`
+      const isMinutes = item.artifact_type === 'meeting_minutes'
+      const isDefaultMinutes = isMinutes && item.version === 1
+      const baseName = artifactNameOverrides[item.artifact_id] || item.artifact_type || 'artifact'
+      const baseMinutesLabel = '纪要'
+      const label = isMinutes
+        ? isDefaultMinutes
+          ? baseMinutesLabel
+          : `${baseMinutesLabel} v${item.version}`
+        : item.version === 1
+        ? baseName
+        : `${baseName} v${item.version}`
       return {
         key: item.artifact_id,
         label,
@@ -274,6 +356,7 @@ const Workspace = () => {
       }
     })
   }, [list, artifactNameOverrides, hiddenArtifacts, id])
+
 
   useEffect(() => {
     if (!list) return
@@ -289,9 +372,12 @@ const Workspace = () => {
     if (!activeArtifact || !currentActive || activeArtifact !== next.artifact_id) {
       setActiveArtifact(next.artifact_id)
       setSyncedArtifacts(new Set())
-      void fetchArtifactDetail(next.artifact_id)
+      void fetchArtifactDetail(next.artifact_id).then((res) => {
+        const artifactData = (res as any)?.artifact ?? res
+        if (artifactData) syncPromptOverride(next.artifact_id, artifactData)
+      })
     }
-  }, [list, id, activeArtifact, fetchArtifactDetail])
+  }, [list, id, activeArtifact, fetchArtifactDetail, syncPromptOverride])
 
   const activeArtifactInfo = useMemo(
     () => artifactTabs.find((tab) => tab.key === activeArtifact)?.artifact,
@@ -299,17 +385,27 @@ const Workspace = () => {
   )
 
   const initialConfigValues: Partial<CreateTaskFormValues> = useMemo(() => {
-    if (!currentTask) return {}
-    const activeLabel = artifactTabs.find((tab) => tab.key === activeArtifact)?.label
+    const stripVersion = (name?: string) => (name ? name.replace(/\s*v\d+$/i, '').trim() : '')
+    const tabLabel = artifactTabs.find((tab) => tab.key === activeArtifact)?.label
+    const baseName =
+      stripVersion(artifactNameOverrides[activeArtifact || ''] || tabLabel) ||
+      (activeArtifactInfo?.artifact_type === 'meeting_minutes' ? '纪要' : activeArtifactInfo?.artifact_type) ||
+      currentTask?.meeting_type ||
+      '纪要'
+
+    const meetingName = baseName || '纪要'
+
+    if (!currentTask) return { meeting_type: meetingName }
+
     return {
-      meeting_type: activeLabel || '纪要',
+      meeting_type: meetingName,
       output_language: currentTask.output_language,
       asr_languages: currentTask.asr_language ? currentTask.asr_language.split('+') : [],
       skip_speaker_recognition: false,
       description: '',
       template_id: activeArtifactInfo?.prompt_instance?.template_id,
     }
-  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs])
+  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs, artifactNameOverrides])
 
   const listFilter = useMemo(() => new URLSearchParams(location.search).get('folder'), [location.search])
   const editorToolbar = useMemo(
@@ -520,10 +616,15 @@ const Workspace = () => {
     if (!id) return
     try {
       const artifactName = values.meeting_type?.trim() || ''
+      const promptText =
+        (localTemplate?.prompt_body && localTemplate.prompt_body.trim()) ||
+        (configMode === 'regenerate' && activeArtifact && promptOverrides[activeArtifact]?.prompt_body?.trim()) ||
+        ''
       const payload = {
         prompt_instance: {
           template_id: values.template_id || activeArtifactInfo?.prompt_instance?.template_id || 'tmpl_rec_1',
           language: values.output_language || currentTask?.output_language || 'zh-CN',
+          prompt_text: promptText,
           parameters: {
             meeting_description: values.description || '',
           },
@@ -532,6 +633,17 @@ const Workspace = () => {
       const res = await regenerate(id, payload)
       message.success(`已重新生成，版本 v${res.version}`)
       setConfigDrawerOpen(false)
+      if (localTemplate?.prompt_body?.trim() && res.artifact_id) {
+        setPromptOverrides((prev) => ({
+          ...prev,
+          [res.artifact_id]: {
+            prompt_body: localTemplate.prompt_body.trim(),
+            title: localTemplate.title,
+            description: localTemplate.description,
+            template_id: localTemplate.template_id,
+          },
+        }))
+      }
       await fetchList(id)
       if (artifactName && res.artifact_id) {
         setArtifactNameOverrides((prev) => ({ ...prev, [res.artifact_id]: artifactName }))
@@ -621,7 +733,9 @@ const currentMarkdown = activeArtifact ? markdownByArtifact[activeArtifact] ?? '
     const render = async () => {
       const { default: Vditor } = await import('vditor')
       if (cancelled) return
-      const markdown = currentMarkdown || resolveMarkdown(parsedContent)
+      const markdown =
+        currentMarkdown ||
+        resolveMarkdown(parsedContentById[activeArtifact || ''] || parsedContentById[currentArtifactId || ''] || null)
       if (!markdown.trim()) {
         container.innerHTML = ''
         return
@@ -655,7 +769,7 @@ const currentMarkdown = activeArtifact ? markdownByArtifact[activeArtifact] ?? '
     return () => {
       cancelled = true
     }
-  }, [mode, currentMarkdown, parsedContent])
+  }, [mode, currentMarkdown, parsedContentById, activeArtifact, currentArtifactId])
 
   useEffect(() => {
     if (mode !== 'preview') return
@@ -681,28 +795,46 @@ const taskFolderTarget = useMemo(() => {
   return `/tasks?folder=${encodeURIComponent(listFilter)}`
 }, [listFilter])
 
-  const handleTabAction = (action: 'delete' | 'regenerate' | 'rename', artifactId?: string) => {
+  const handleTabAction = async (action: 'delete' | 'regenerate' | 'rename', artifactId?: string) => {
     if (action === 'regenerate') {
+      setConfigMode('regenerate')
       setConfigDrawerOpen(true)
       return
     }
     if (action === 'delete' && artifactId) {
       const target = artifactTabs.find((tab) => tab.key === artifactId)
-      if (target?.isDefaultMinutes) return
-      setHiddenArtifacts((prev) => {
-        const next = new Set(prev)
-        next.add(artifactId)
-        return next
-      })
-      if (artifactId === activeArtifact) {
-        const nextTab = artifactTabs.find((tab) => tab.key !== artifactId)
-        if (nextTab) {
-          setActiveArtifact(nextTab.key)
-          fetchArtifactDetail(nextTab.key)
-        } else {
-          setActiveArtifact(undefined)
-        }
+      if (target?.isDefaultMinutes) {
+        message.info('默认纪要版本不可删除')
+        return
       }
+      if (!id) {
+        message.error('任务信息缺失，无法删除')
+        return
+      }
+      Modal.confirm({
+        title: '确认删除该版本？',
+        content: '此操作不可恢复，删除后可重新生成新版本。',
+        okText: '删除',
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          try {
+            await deleteArtifact(id, artifactId)
+            setPromptOverrides((prev) => {
+              const { [artifactId]: _, ...rest } = prev
+              return rest
+            })
+            setArtifactNameOverrides((prev) => {
+              const { [artifactId]: _, ...rest } = prev
+              return rest
+            })
+            message.success('已删除该版本')
+            await fetchList(id)
+          } catch (err) {
+            message.error((err as Error)?.message || '删除失败')
+            throw err
+          }
+        },
+      })
       return
     }
     if (action === 'rename' && artifactId) {
@@ -733,21 +865,51 @@ const taskFolderTarget = useMemo(() => {
   }
 
   const handleOpenPromptModal = useCallback(async () => {
+    const artifactId = activeArtifactInfo?.artifact_id
+    const override = artifactId ? promptOverrides[artifactId] : undefined
     const tplId = activeArtifactInfo?.prompt_instance?.template_id
-    if (!tplId) {
+    const metaPrompt = (currentArtifactDetail?.artifact as any)?.metadata?.prompt
+    const promptText = override?.prompt_body || metaPrompt?.prompt_text || activeArtifactInfo?.prompt_instance?.prompt_text
+
+    if (!tplId && !override?.prompt_body && !promptText) {
       message.info('当前版本没有提示词')
       return
     }
+
     setPromptModalOpen(true)
+
+    const promptBody = override?.prompt_body || promptText
+    if (promptBody) {
+      const fallbackId = tplId || metaPrompt?.template_id || 'temp_template'
+      const title = resolvePromptTitle(
+        override?.template_id || metaPrompt?.template_id || tplId,
+        override?.title || metaPrompt?.title,
+        true
+      )
+      setPromptTemplate({
+        template_id: override?.template_id || metaPrompt?.template_id || fallbackId,
+        title,
+        description: override?.description || metaPrompt?.description || '',
+        prompt_body: promptBody,
+        artifact_type: activeArtifactInfo?.artifact_type || 'meeting_minutes',
+        supported_languages: ['zh-CN'],
+        parameter_schema: {},
+        is_system: false,
+        scope: 'private',
+        created_at: '',
+      })
+      return
+    }
+
     setPromptTemplate(null)
     try {
-      const tpl = await getTemplateDetail(tplId)
+      const tpl = await getTemplateDetail(tplId as string)
       setPromptTemplate(tpl)
     } catch (err) {
       setPromptTemplate(null)
       message.error((err as Error)?.message || '提示词加载失败')
     }
-  }, [activeArtifactInfo?.prompt_instance?.template_id, getTemplateDetail])
+  }, [activeArtifactInfo, currentArtifactDetail?.artifact, getTemplateDetail, promptOverrides, resolvePromptTitle])
 
   const handleSavePromptAsNew = useCallback(
     async (payload: { title: string; description: string; prompt_body: string }) => {
@@ -810,6 +972,7 @@ const taskFolderTarget = useMemo(() => {
   }, [saveTranscript, saveArtifact, activeArtifact])
 
   const handleCreateArtifact = () => {
+    setConfigMode('create')
     setConfigDrawerOpen(true)
   }
 
@@ -896,11 +1059,14 @@ const taskFolderTarget = useMemo(() => {
                     activeKey={activeArtifact}
                     onChange={(key) => {
                       setActiveArtifact(key)
-                      fetchArtifactDetail(key)
+                      fetchArtifactDetail(key).then((res) => {
+                        const artifactData = (res as any)?.artifact ?? res
+                        if (artifactData) syncPromptOverride(key, artifactData)
+                      })
                     }}
                     tabBarExtraContent={{
                       right: (
-                        <Tooltip title="生成新版本">
+                        <Tooltip title="生成新笔记">
                           <Button
                             type="text"
                             size="small"
@@ -911,64 +1077,69 @@ const taskFolderTarget = useMemo(() => {
                         </Tooltip>
                       ),
                     }}
-                    items={artifactTabs.map((tab) => ({
-                      key: tab.key,
-                      label: (
-                        <span className="workspace-tab-label">
-                          <span className="workspace-tab-label__name">{tab.label}</span>
-                          <Dropdown
-                            trigger={['click']}
-                            menu={{
-                              items: [
-                                { key: 'rename', label: '重命名', icon: <EditOutlined /> },
-                                { key: 'regenerate', label: '重新生成', icon: <RedoOutlined className="workspace-tab-action-icon" /> },
-                                ...(tab.isDefaultMinutes ? [] : [{ key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true }]),
-                              ],
-                              onClick: ({ key }) =>
-                                handleTabAction(key as 'delete' | 'regenerate' | 'rename', tab.key),
-                            }}
-                          >
-                            <button
-                              type="button"
-                              className="workspace-tab-label__menu"
-                              onClick={(event) => event.stopPropagation()}
+                    items={artifactTabs.map((tab) => {
+                      const menuItems = [
+                        ...(tab.artifact.artifact_type === 'meeting_minutes'
+                          ? []
+                          : [{ key: 'rename', label: '重命名', icon: <EditOutlined /> }]),
+                        { key: 'regenerate', label: '重新生成', icon: <RedoOutlined className="workspace-tab-action-icon" /> },
+                        ...(tab.isDefaultMinutes ? [] : [{ key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true }]),
+                      ]
+                      return {
+                        key: tab.key,
+                        label: (
+                          <span className="workspace-tab-label">
+                            <span className="workspace-tab-label__name">{tab.label}</span>
+                            <Dropdown
+                              trigger={['click']}
+                              menu={{
+                                items: menuItems,
+                                onClick: ({ key }) =>
+                                  handleTabAction(key as 'delete' | 'regenerate' | 'rename', tab.key),
+                              }}
                             >
-                              <DownOutlined className="workspace-tab-label__icon" />
-                            </button>
-                          </Dropdown>
-                        </span>
-                      ),
-                    }))}
-                        size="small"
+                              <button
+                                type="button"
+                                className="workspace-tab-label__menu"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <DownOutlined className="workspace-tab-label__icon" />
+                              </button>
+                            </Dropdown>
+                          </span>
+                        ),
+                      }
+                    })}
+                    size="small"
                     className="workspace-tabs"
                   />
-                <div className="workspace-pane__actions">
-                  <Tooltip title="查看提示词">
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EyeOutlined />}
-                      onClick={handleOpenPromptModal}
-                    />
-                  </Tooltip>
-                  <Tooltip title={mode === 'preview' ? '预览模式' : '编辑模式'}>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={mode === 'preview' ? <BookOutlined /> : <FormOutlined />}
-                      onClick={() => setMode(mode === 'preview' ? 'edit' : 'preview')}
-                    />
-                  </Tooltip>
-                  <Typography.Text
-                    type={
-                      artifactStatus[activeArtifact || ''] === 'error'
-                        ? 'danger'
-                        : 'secondary'
-                    }
-                  >
-                    {renderStatusText(artifactStatus[activeArtifact || ''] || 'saved')}
-                  </Typography.Text>
-                </div>
+                  <div className="workspace-pane__actions">
+                    <Tooltip title="查看提示词">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={handleOpenPromptModal}
+                      />
+                    </Tooltip>
+                    <Tooltip title={mode === 'preview' ? '预览模式' : '编辑模式'}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={mode === 'preview' ? <BookOutlined /> : <FormOutlined />}
+                        onClick={() => setMode(mode === 'preview' ? 'edit' : 'preview')}
+                      />
+                    </Tooltip>
+                    <Typography.Text
+                      type={
+                        artifactStatus[activeArtifact || ''] === 'error'
+                          ? 'danger'
+                          : 'secondary'
+                      }
+                    >
+                      {renderStatusText(artifactStatus[activeArtifact || ''] || 'saved')}
+                    </Typography.Text>
+                  </div>
                 </div>
 
                 <div className="workspace-pane__body workspace-pane__body--markdown">
@@ -1048,7 +1219,7 @@ const taskFolderTarget = useMemo(() => {
       />
 
       <Drawer
-        title="重新生成配置"
+        title={configMode === 'create' ? '新笔记生成配置' : '重新生成配置'}
         width={600}
         onClose={() => setConfigDrawerOpen(false)}
         open={configDrawerOpen}
@@ -1057,9 +1228,9 @@ const taskFolderTarget = useMemo(() => {
         <TaskConfigForm
           initialValues={initialConfigValues}
           onFinish={handleRegenerate}
-          submitText="确认并重新生成"
-          meetingTypeLabel="纪要名称"
-          meetingTypePlaceholder="默认使用当前纪要名称"
+          submitText={configMode === 'create' ? '确认并生成' : '确认并重新生成'}
+          meetingTypeLabel="名称"
+          meetingTypePlaceholder="默认使用当前名称"
           templateOverride={localTemplate}
           onTemplateChange={setLocalTemplate}
         />
@@ -1069,6 +1240,7 @@ const taskFolderTarget = useMemo(() => {
 }
 
 export default Workspace
+
 
 
 

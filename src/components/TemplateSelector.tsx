@@ -4,6 +4,7 @@ import { CheckOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons
 import { useTemplateStore } from '@/store/template'
 import { useAuthStore } from '@/store/auth'
 import type { PromptTemplate } from '@/types/frontend-types'
+import type { InputRef } from 'antd'
 import './TemplateSelector.css'
 
 interface Props {
@@ -27,6 +28,7 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
   const [saveDesc, setSaveDesc] = useState('')
   const historyRef = useRef<{ stack: string[]; index: number }>({ stack: [], index: -1 })
   const originalPromptRef = useRef('')
+  const saveNameInputRef = useRef<InputRef | null>(null)
 
   const blankTemplate: PromptTemplate = {
     template_id: '__blank__',
@@ -67,6 +69,14 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
       setDirty(false)
     }
   }, [open, list, activeId, initialTemplate, initialContent])
+
+  useEffect(() => {
+    if (savePopoverOpen) {
+      window.setTimeout(() => {
+        saveNameInputRef.current?.focus()
+      }, 0)
+    }
+  }, [savePopoverOpen])
 
   const activeTemplate = list.find((tpl) => tpl.template_id === activeId) || null
   const hasSelection = Boolean(activeTemplate)
@@ -288,13 +298,17 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
                 <Space>
                   <Popover
                     open={savePopoverOpen}
-                    onOpenChange={setSavePopoverOpen}
+                    onOpenChange={(visible) => setSavePopoverOpen(visible)}
                     trigger="click"
                     placement="topRight"
+                    destroyTooltipOnHide
+                    getPopupContainer={(triggerNode) => triggerNode.parentElement || document.body}
+                    overlayStyle={{ pointerEvents: 'auto' }}
                     content={
                       <Space direction="vertical" style={{ width: 280 }}>
                         <Typography.Text type="secondary">模板名称</Typography.Text>
                         <Input
+                          ref={saveNameInputRef}
                           placeholder="请输入新模板名称"
                           value={saveName}
                           onChange={(e) => setSaveName(e.target.value)}
@@ -304,15 +318,15 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
                           rows={3}
                           placeholder="请输入模板描述（可选）"
                           value={saveDesc}
-      onChange={(e) => setSaveDesc(e.target.value)}
-    />
+                          onChange={(e) => setSaveDesc(e.target.value)}
+                        />
                         <Button type="primary" block icon={<SaveOutlined />} onClick={handleSaveAs}>
                           保存
                         </Button>
                       </Space>
                     }
                   >
-                    <Button disabled={!hasSelection || !dirty} icon={<SaveOutlined />} onClick={() => setSavePopoverOpen(true)}>
+                    <Button disabled={!hasSelection} icon={<SaveOutlined />} onClick={() => setSavePopoverOpen(true)}>
                       另存为新模板
                     </Button>
                   </Popover>

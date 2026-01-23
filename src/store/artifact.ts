@@ -11,9 +11,11 @@ interface ArtifactState {
   list: ListArtifactsResponse | null
   current: ArtifactDetailResponse | null
   parsedContent: Record<string, unknown> | null
+  parsedContentById: Record<string, Record<string, unknown> | null>
+  currentArtifactId: string | null
   loading: boolean
   fetchList: (taskId: string) => Promise<void>
-  fetchDetail: (artifactId: string) => Promise<void>
+  fetchDetail: (artifactId: string) => Promise<ArtifactDetailResponse>
   regenerate: (taskId: string, payload: GenerateArtifactRequest) => Promise<GenerateArtifactResponse>
 }
 
@@ -21,9 +23,11 @@ export const useArtifactStore = create<ArtifactState>((set) => ({
   list: null,
   current: null,
   parsedContent: null,
+  parsedContentById: {},
+  currentArtifactId: null,
   loading: false,
   fetchList: async (taskId) => {
-    set({ loading: true, list: null, current: null, parsedContent: null })
+    set({ loading: true, list: null, current: null, parsedContent: null, parsedContentById: {}, currentArtifactId: null })
     try {
       const data = await listArtifacts(taskId)
       const mapped = {
@@ -70,7 +74,14 @@ export const useArtifactStore = create<ArtifactState>((set) => ({
       }
     }
 
-    set({ current: { artifact: artifact as any }, parsedContent: parsed })
+    set((prev) => ({
+      current: { artifact: artifact as any },
+      parsedContent: parsed,
+      currentArtifactId: artifactId,
+      parsedContentById: { ...(prev.parsedContentById || {}), [artifactId]: parsed },
+    }))
+
+    return { artifact: artifact as any }
   },
   regenerate: async (taskId, payload) => {
     // Default to 'meeting_minutes' for now as it's the main artifact type

@@ -4,6 +4,7 @@ import type {
   GenerateArtifactRequest,
   GenerateArtifactResponse,
   ListArtifactsResponse,
+  DeleteArtifactResponse,
 } from '@/types/frontend-types'
 
 export const listArtifacts = (taskId: string) =>
@@ -30,4 +31,10 @@ export const updateArtifact = (artifactId: string, content: string) =>
     url: `/artifacts/${artifactId}`,
     method: 'PUT',
     data: { content },
+  })
+
+export const deleteArtifact = (taskId: string, artifactId: string) =>
+  request<DeleteArtifactResponse>({
+    url: `/tasks/${taskId}/artifacts/${artifactId}`,
+    method: 'DELETE',
   })

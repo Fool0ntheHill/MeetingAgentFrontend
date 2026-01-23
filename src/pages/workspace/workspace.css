@@ -202,6 +202,19 @@
 .workspace-tabs {
   margin-bottom: -1px;
 }
+
+.workspace-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.workspace-tabs .ant-tabs-nav-list {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workspace-tabs .ant-tabs-tab {
+  white-space: nowrap;
+}
 .workspace-tabs .ant-tabs-nav {
   margin-bottom: 0;
 }
