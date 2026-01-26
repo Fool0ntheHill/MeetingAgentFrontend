@@ -95,6 +95,12 @@ export const moveTaskToFolder = (taskId: string, folder_id: string | null) =>
     data: { folder_id },
   })
 
+export const cancelTask = (taskId: string) =>
+  request<{ success: boolean; message?: string; task_id?: string; previous_state?: string }>({
+    url: `/tasks/${taskId}/cancel`,
+    method: 'POST',
+  })
+
 export const deleteTaskSoft = (taskId: string) =>
   request<{ success: boolean; message?: string }>({
     url: `/sessions/${taskId}/delete`,

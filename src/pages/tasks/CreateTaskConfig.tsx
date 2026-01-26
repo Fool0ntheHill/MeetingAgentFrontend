@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+﻿import { useEffect, useRef } from 'react'
 import { Button, Card, Typography, message } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -53,7 +53,11 @@ const CreateTaskConfig = () => {
     const asr_language = values.asr_languages && values.asr_languages.length > 0 ? values.asr_languages.join('+') : undefined
     const promptParameters = values.description ? { meeting_description: values.description } : {}
     const totalDuration = uploads.reduce((sum, item) => sum + (item.duration ?? 0), 0)
-    const promptText = (template?.prompt_body || '').trim()
+    const promptText = (values.prompt_text?.trim() || template?.prompt_body?.trim() || '')
+    if (template.template_id === '__blank__' && !promptText) {
+      message.error('空白模板必须填写提示词')
+      return
+    }
     const payload: CreateTaskRequest = {
       audio_files: uploads.map((item) => item.file_path),
       file_order: uploads.map((_, index) => index),

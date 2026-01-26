@@ -29,6 +29,7 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
   const historyRef = useRef<{ stack: string[]; index: number }>({ stack: [], index: -1 })
   const originalPromptRef = useRef('')
   const saveNameInputRef = useRef<InputRef | null>(null)
+  const appliedInitialRef = useRef(false)
 
   const blankTemplate: PromptTemplate = {
     template_id: '__blank__',
@@ -52,22 +53,34 @@ const TemplateSelector = ({ open, onClose, onApply, initialTemplate, initialCont
   }, [fetchTemplates, open, tenantId, userId])
 
   useEffect(() => {
-    if (!open) return
-    if (!activeId && list.length > 0) {
-      const target =
-        initialTemplate && list.find((tpl) => tpl.template_id === initialTemplate.template_id)
-          ? (initialTemplate as PromptTemplate)
-          : list.find((tpl) => tpl.template_id !== '__blank__') || list[0]
-      const body = initialContent ?? target.prompt_body ?? ''
-      setActiveId(target.template_id)
-      setEditorTitle(target.title || '')
-      setEditorBody(body)
-      setSaveName(target.title || '')
-      setSaveDesc(target.description || '')
-      originalPromptRef.current = target.prompt_body || ''
-      historyRef.current = { stack: [body], index: 0 }
-      setDirty(false)
+    // 打开弹窗或初始模板变更时，允许重新应用默认值一次
+    if (!open) {
+      appliedInitialRef.current = false
+      return
     }
+    appliedInitialRef.current = false
+  }, [open, initialTemplate?.template_id])
+
+  useEffect(() => {
+    if (!open || list.length === 0 || appliedInitialRef.current) return
+
+    const pickByInitial = () =>
+      initialTemplate ? list.find((tpl) => tpl.template_id === initialTemplate.template_id) : null
+    const pickFallback = () => list.find((tpl) => tpl.template_id !== '__blank__') || list[0]
+
+    const target = pickByInitial() || (!activeId && pickFallback())
+    if (!target) return
+
+    const body = initialContent ?? target.prompt_body ?? ''
+    setActiveId(target.template_id)
+    setEditorTitle(target.title || '')
+    setEditorBody(body)
+    setSaveName(target.title || '')
+    setSaveDesc(target.description || '')
+    originalPromptRef.current = target.prompt_body || ''
+    historyRef.current = { stack: [body], index: 0 }
+    setDirty(false)
+    appliedInitialRef.current = true
   }, [open, list, activeId, initialTemplate, initialContent])
 
   useEffect(() => {

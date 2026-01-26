@@ -12,6 +12,7 @@ export interface CreateTaskFormValues {
   meeting_attendees?: string
   description?: string
   template_id?: string
+  prompt_text?: string
 }
 
 const outputLanguageOptions = [
@@ -38,6 +39,7 @@ interface TaskConfigFormProps {
   renderExtraActions?: () => React.ReactNode
   templateOverride?: Template | null
   onTemplateChange?: (tpl: Template | null) => void
+  disableDefaultTemplate?: boolean
 }
 
 const TaskConfigForm = ({
@@ -50,6 +52,7 @@ const TaskConfigForm = ({
   renderExtraActions,
   templateOverride,
   onTemplateChange,
+  disableDefaultTemplate = false,
 }: TaskConfigFormProps) => {
   const [form] = Form.useForm<CreateTaskFormValues>()
   const [templateModal, setTemplateModal] = useState(false)
@@ -61,12 +64,31 @@ const TaskConfigForm = ({
   // Use local state for template if not controlled/overridden
   const [localTemplate, setLocalTemplate] = useState<Template | null>(null)
   const activeTemplate = templateOverride !== undefined ? templateOverride : localTemplate
-  
+
+  const handleFinish = (values: CreateTaskFormValues) => {
+    const cleanedPrompt = (customPrompt ?? values.prompt_text ?? '').trim()
+    onFinish({ ...values, prompt_text: cleanedPrompt || undefined })
+  }
+
   useEffect(() => {
     if (initialValues) {
       form.setFieldsValue(initialValues)
+      if (initialValues.prompt_text) {
+        setCustomPrompt(initialValues.prompt_text)
+        setTemplateOriginalBody(initialValues.prompt_text)
+      }
     }
   }, [initialValues, form])
+
+  useEffect(() => {
+    if (!templateOverride) return
+    setCustomPrompt(templateOverride.prompt_body || null)
+    setTemplateOriginalBody(templateOverride.prompt_body || null)
+    form.setFieldsValue({
+      template_id: templateOverride.template_id,
+      prompt_text: templateOverride.prompt_body || '',
+    })
+  }, [templateOverride, form])
 
   const handleTemplateApply = (tpl: Template, originalBody?: string | null) => {
     if (onTemplateChange) {
@@ -76,12 +98,13 @@ const TaskConfigForm = ({
     }
     setTemplateOriginalBody(originalBody ?? tpl.prompt_body ?? null)
     setCustomPrompt(tpl.prompt_body || null)
-    form.setFieldsValue({ template_id: tpl.template_id })
+    form.setFieldsValue({ template_id: tpl.template_id, prompt_text: tpl.prompt_body || '' })
     setTemplateModal(false)
     message.success(`已选择模板：${tpl.title}`)
   }
 
   useEffect(() => {
+    if (disableDefaultTemplate) return
     if (defaultApplied) return
     if (!defaultTemplateId) return
     if (activeTemplate) {
@@ -99,21 +122,21 @@ const TaskConfigForm = ({
       }
       setTemplateOriginalBody(tpl.prompt_body || null)
       setCustomPrompt(tpl.prompt_body || null)
-      form.setFieldsValue({ template_id: tpl.template_id })
+      form.setFieldsValue({ template_id: tpl.template_id, prompt_text: tpl.prompt_body || '' })
       setDefaultApplied(true)
     }
     void applyDefault()
     return () => {
       cancelled = true
     }
-  }, [activeTemplate, defaultApplied, defaultTemplateId, form, getDetail, onTemplateChange])
+  }, [activeTemplate, defaultApplied, defaultTemplateId, form, getDetail, onTemplateChange, disableDefaultTemplate])
 
   return (
     <>
       <Form
         form={form}
         layout="vertical"
-        onFinish={onFinish}
+        onFinish={handleFinish}
         onValuesChange={onValuesChange}
         initialValues={initialValues}
       >
@@ -130,29 +153,46 @@ const TaskConfigForm = ({
             <Button onClick={() => setTemplateModal(true)} icon={<PlusOutlined />}>
               选择模板
             </Button>
-            {activeTemplate && (
-              <div className="template-selected">
-                <Typography.Text>已选：</Typography.Text>
-                <Typography.Text strong>
-                  {activeTemplate.title}
-                  {customPrompt && templateOriginalBody !== null && customPrompt !== templateOriginalBody ? '（已修改）' : ''}
-                </Typography.Text>
-                {customPrompt && templateOriginalBody !== null && customPrompt !== templateOriginalBody && (
-                  <Button
-                    size="small"
-                    type="link"
-                    onClick={() => {
-                      setCustomPrompt(templateOriginalBody)
-                      message.success('已恢复模板默认内容')
-                    }}
-                  >
-                    恢复默认
-                  </Button>
-                )}
-              </div>
-            )}
+            {activeTemplate && (() => {
+              const isBlank = activeTemplate.template_id === '__blank__'
+              const hasEditedContent =
+                customPrompt && templateOriginalBody !== null && customPrompt !== templateOriginalBody
+              const displayName =
+                activeTemplate.title ||
+                (isBlank
+                  ? hasEditedContent
+                    ? '临时空白模板（修改版）'
+                    : '临时空白模板'
+                  : activeTemplate.template_id)
+
+              return (
+                <div className="template-selected">
+                  <Typography.Text>已选：</Typography.Text>
+                  <Typography.Text strong title={displayName}>
+                    {displayName}
+                    {hasEditedContent ? '（已修改）' : ''}
+                  </Typography.Text>
+                  {hasEditedContent && (
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={() => {
+                        setCustomPrompt(templateOriginalBody)
+                        form.setFieldsValue({ prompt_text: templateOriginalBody ?? '' })
+                        message.success('已恢复模板默认内容')
+                      }}
+                    >
+                      恢复默认
+                    </Button>
+                  )}
+                </div>
+              )
+            })()}
           </Space>
           <Form.Item name="template_id" rules={[{ required: true, message: '请选择提示词模板' }]} hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name="prompt_text" hidden>
             <Input />
           </Form.Item>
           <Form.Item shouldUpdate noStyle>
@@ -199,7 +239,7 @@ const TaskConfigForm = ({
       <TemplateSelector
         open={templateModal}
         initialTemplate={activeTemplate ?? undefined}
-        initialContent={customPrompt ?? undefined}
+        initialContent={customPrompt ?? activeTemplate?.prompt_body ?? undefined}
         onClose={() => setTemplateModal(false)}
         onApply={({ template, prompt, description, originalPrompt }) => {
           handleTemplateApply({ ...template, prompt_body: prompt, description }, originalPrompt ?? template.prompt_body ?? null)

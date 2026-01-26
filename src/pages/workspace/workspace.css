@@ -210,10 +210,21 @@
 .workspace-tabs .ant-tabs-nav-list {
   overflow-x: auto;
   scrollbar-width: thin;
+  gap: 4px;
 }
 
 .workspace-tabs .ant-tabs-tab {
   white-space: nowrap;
+  padding: 0 8px;
+}
+.workspace-tabs .ant-tabs-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.workspace-tabs .ant-tabs-tab {
+  display: inline-flex;
+  align-items: center;
 }
 .workspace-tabs .ant-tabs-nav {
   margin-bottom: 0;

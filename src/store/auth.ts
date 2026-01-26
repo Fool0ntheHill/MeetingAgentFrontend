@@ -8,6 +8,8 @@ interface AuthState {
   userId: string | null
   tenantId: string | null
   username: string | null
+  account: string | null
+  avatar: string | null
   expiresAt: number | null
   loading: boolean
   login: (username: string) => Promise<LoginResponse>
@@ -20,12 +22,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   userId: null,
   tenantId: null,
   username: null,
+  account: null,
+  avatar: null,
   expiresAt: null,
   loading: false,
   hydrate: () => {
-    const { token, userId, tenantId, expiry, username } = authStorage.load()
+    const { token, userId, tenantId, expiry, username, account, avatar } = authStorage.load()
     if (token && expiry && Date.now() < expiry) {
-      set({ token, userId, tenantId, expiresAt: expiry, username })
+      set({ token, userId, tenantId, expiresAt: expiry, username, account, avatar })
     } else {
       authStorage.clear()
     }
@@ -41,6 +45,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         tenantId: res.tenant_id,
         expiresAt: Date.now() + res.expires_in * 1000,
         username,
+        account: null,
+        avatar: null,
       })
       return res
     } finally {
@@ -49,6 +55,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   logout: () => {
     authStorage.clear()
-    set({ token: null, userId: null, tenantId: null, expiresAt: null, username: null })
+    set({ token: null, userId: null, tenantId: null, expiresAt: null, username: null, account: null, avatar: null })
   },
 }))

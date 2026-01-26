@@ -16,7 +16,7 @@ interface ArtifactState {
   loading: boolean
   fetchList: (taskId: string) => Promise<void>
   fetchDetail: (artifactId: string) => Promise<ArtifactDetailResponse>
-  regenerate: (taskId: string, payload: GenerateArtifactRequest) => Promise<GenerateArtifactResponse>
+  regenerate: (taskId: string, artifactType: string, payload: GenerateArtifactRequest) => Promise<GenerateArtifactResponse>
 }
 
 export const useArtifactStore = create<ArtifactState>((set) => ({
@@ -83,9 +83,8 @@ export const useArtifactStore = create<ArtifactState>((set) => ({
 
     return { artifact: artifact as any }
   },
-  regenerate: async (taskId, payload) => {
-    // Default to 'meeting_minutes' for now as it's the main artifact type
-    const res = await regenerateArtifact(taskId, 'meeting_minutes', payload)
+  regenerate: async (taskId, artifactType, payload) => {
+    const res = await regenerateArtifact(taskId, artifactType || 'meeting_minutes', payload)
     return res
   },
 }))

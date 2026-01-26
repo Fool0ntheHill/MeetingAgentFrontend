@@ -37,6 +37,7 @@ export type TaskState =
   | 'success'
   | 'failed'
   | 'partial_success'
+  | 'cancelled'
 
 export interface AudioFile {
   file_path: string
@@ -175,6 +176,7 @@ export interface ArtifactInfo {
   task_id: string
   artifact_type: string // meeting_minutes, action_items, summary_notes
   version: number
+  display_name?: string
   prompt_instance: PromptInstance
   created_at: string
   created_by: string
@@ -191,6 +193,7 @@ export interface GeneratedArtifact {
   task_id: string
   artifact_type: string
   version: number
+  display_name?: string
   prompt_instance: PromptInstance
   content: string // JSON 字符串，需要 JSON.parse()
   metadata?: Record<string, any>
@@ -204,12 +207,14 @@ export interface ArtifactDetailResponse {
 
 export interface GenerateArtifactRequest {
   prompt_instance: PromptInstance
+  name?: string
 }
 
 export interface GenerateArtifactResponse {
   success: boolean
   artifact_id: string
   version: number
+  display_name?: string
   content: Record<string, any>
   message: string
 }

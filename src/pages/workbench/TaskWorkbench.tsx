@@ -17,7 +17,7 @@ import { useTaskStore } from "@/store/task"
 import type { TaskState } from "@/types/frontend-types"
 import { ENV, API_URL } from "@/config/env"
 import TaskConfigForm, { type CreateTaskFormValues } from "@/components/TaskConfigForm"
-import { deleteTaskSoft } from "@/api/tasks"
+import { deleteTaskSoft, cancelTask } from "@/api/tasks"
 import { authStorage } from "@/utils/auth-storage"
 import "./task-workbench.css"
 
@@ -68,6 +68,7 @@ const TaskWorkbench = () => {
     if (!state) return "PENDING"
     if (state === "success" || state === "partial_success") return "SUCCESS"
     if (state === "failed") return "FAILED"
+    if (state === "cancelled") return "CANCELLED"
     if (state === "pending" || state === "queued") {
       return progress && progress > 0 ? "PROCESSING" : "PENDING"
     }
@@ -106,7 +107,8 @@ const TaskWorkbench = () => {
     const normalized = (state ?? "").trim().toLowerCase() as TaskState | ""
     // 后端明确阶段优先
     if (normalized === "identifying" || normalized === "correcting" || normalized === "summarizing") return normalized
-    if (normalized === "success" || normalized === "failed" || normalized === "partial_success") return normalized
+    if (normalized === "success" || normalized === "failed" || normalized === "partial_success" || normalized === "cancelled")
+      return normalized
     if (normalized === "transcribing" || normalized === "running") {
       if (progress !== undefined) {
         if (progress >= 70) return "summarizing"
@@ -351,11 +353,20 @@ const TaskWorkbench = () => {
     if (!id) return
     Modal.confirm({
       title: "确认中止任务？",
-      content: "任务将立即停止，状态标记为失败，可在列表中查看记录。",
-      okText: "确认中止",
+      content: "将请求后端取消任务，处理中断后状态会变为取消。",
+      okText: "确认取消",
       cancelText: "取消",
       okButtonProps: { danger: true },
-      onOk: () => abortTask(id),
+      onOk: async () => {
+        try {
+          await cancelTask(id)
+          abortTask(id)
+          message.success("已提交取消请求")
+        } catch (err) {
+          message.error((err as Error)?.message || "取消任务失败")
+          return Promise.reject()
+        }
+      },
     })
   }
 

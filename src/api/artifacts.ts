@@ -24,6 +24,7 @@ export const regenerateArtifact = (taskId: string, artifactType: string, payload
     url: `/tasks/${taskId}/artifacts/${artifactType}/generate`,
     method: 'POST',
     data: payload,
+    timeout: 1200000, // 生成耗时较长，延长超时到 1200s
   })
 
 export const updateArtifact = (artifactId: string, content: string) =>

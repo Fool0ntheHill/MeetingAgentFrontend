@@ -1,14 +1,39 @@
 import { Button, Card, Form, Input, Typography, Space, Alert } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { jumpToLogin } from '@/utils/http-client'
+import { authStorage } from '@/utils/auth-storage'
 
 const Login = () => {
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const location = useLocation()
-  const { login, loading } = useAuthStore()
+  const { login, loading, hydrate } = useAuthStore()
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('access_token')
+    if (token) {
+      const userId = params.get('user_id') || ''
+      const tenantId = params.get('tenant_id') || ''
+      const username = params.get('username') || ''
+      const expiresIn = Number(params.get('expires_in')) || 86400
+      const account = params.get('account') || ''
+      const avatar = params.get('avatar') || ''
+      authStorage.save(token, userId, tenantId, expiresIn, username, account, avatar)
+      hydrate()
+      // 清理 URL 参数
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash)
+      const redirect = ((location.state as { from?: string } | null)?.from) ?? '/home'
+      navigate(redirect, { replace: true })
+    }
+  }, [hydrate, location.state, navigate])
+
+  const handleSsoLogin = () => {
+    jumpToLogin()
+  }
 
   const onFinish = async (values: { username: string }) => {
     setError(null)
@@ -48,8 +73,8 @@ const Login = () => {
           </Button>
         </Form>
         <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
-          <Button block disabled>
-            企业微信扫码登录（占位，生产启用）
+          <Button block onClick={handleSsoLogin}>
+            企业微信扫码登录（跳转测试）
           </Button>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Token 24 小时有效，过期自动跳转登录。

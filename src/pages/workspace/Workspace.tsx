@@ -92,10 +92,16 @@ ${actionItems.map((p) => `- [ ] ${String(p)}`).join('\n')}
 const resolveMarkdown = (raw: Record<string, unknown> | Array<Record<string, unknown>> | null) => {
   if (!raw) return ''
   const obj = Array.isArray(raw) ? (raw[0] as Record<string, unknown> | undefined) ?? {} : raw
+  if (!obj || (typeof obj === 'object' && Object.keys(obj).length === 0)) return ''
   const direct =
     (typeof obj.content === 'string' && obj.content.trim()) ||
     (typeof obj.markdown === 'string' && obj.markdown.trim())
   if (direct) return direct
+
+  // 没有内容字段且缺少关键信息时，不再渲染默认模板
+  const hasStructuredContent =
+    obj.summary || obj.title || obj.key_points || obj.action_items || obj['会议概要'] || obj['讨论要点']
+  if (!hasStructuredContent) return ''
   return renderMinutes(obj)
 }
 
@@ -136,6 +142,18 @@ const inlineImages = async (content: string) => {
     result = result.replace(match[0], `![${alt}](${dataUrl})`)
   }
   return result
+}
+
+const markdownToBasicHtml = (md: string) => {
+  // 仅做基础转换，保证粘贴时图片可见
+  let html = md
+  html = html.replace(/!\[([^\]]*)]\(([^)]+)\)/g, (_m, alt, src) => {
+    const safeAlt = (alt as string) || ''
+    return `<img src="${src}" alt="${safeAlt}" style="max-width:100%;height:auto;" />`
+  })
+  // 保留换行
+  html = html.replace(/\n{2,}/g, '<br/><br/>').replace(/\n/g, '<br/>')
+  return `<div>${html}</div>`
 }
 
 const MoveFolderIcon = () => (
@@ -201,6 +219,7 @@ const Workspace = () => {
     }
   })
   const [configMode, setConfigMode] = useState<ConfigMode>('regenerate')
+  const [configFormKey, setConfigFormKey] = useState(0)
   const [hiddenArtifacts, setHiddenArtifacts] = useState<Set<string>>(new Set())
   const [syncedArtifacts, setSyncedArtifacts] = useState<Set<string>>(new Set())
   const [activeEditor, setActiveEditor] = useState<'transcript' | 'artifact' | null>(null)
@@ -208,6 +227,8 @@ const Workspace = () => {
     past: [],
     future: [],
   })
+  const [artifactFeedback, setArtifactFeedback] = useState<Record<string, 'like' | 'dislike' | null>>({})
+  const [transcriptFeedback, setTranscriptFeedback] = useState<Record<string, 'like' | 'dislike' | null>>({})
   const transcriptHistoryTimer = useRef<number | null>(null)
   const transcriptSnapshotRef = useRef<TranscriptParagraph[]>([])
   const applyingHistoryRef = useRef(false)
@@ -217,11 +238,13 @@ const Workspace = () => {
   const vditorRef = useRef<VditorType | null>(null)
   const resolvePromptTitle = useCallback(
     (tplId?: string, metaTitle?: string, edited?: boolean) => {
+      const normalizedId = (tplId || '').trim()
+      const normalizedMeta = (metaTitle || '').trim()
       const found = tplId ? templates.find((tpl) => tpl.template_id === tplId) : null
       const base =
-        metaTitle ||
+        (normalizedMeta && normalizedMeta.toLowerCase() !== '__blank__' ? normalizedMeta : undefined) ||
         found?.title ||
-        (tplId === '__blank__' ? '临时空白模板' : tplId || '临时提示词')
+        (normalizedId.toLowerCase() === '__blank__' ? '临时空白模板' : normalizedId || '临时提示词')
       return edited ? `${base}（修改版）` : base
     },
     [templates]
@@ -238,7 +261,7 @@ const Workspace = () => {
         ...prev,
         [artifactId]: {
           prompt_body: String(promptText),
-          title: metaPrompt?.template_id || metaPrompt?.title || '临时提示词',
+          title: metaPrompt?.title || undefined,
           description: metaPrompt?.description || '',
           template_id: metaPrompt?.template_id || artifactData?.prompt_instance?.template_id,
         },
@@ -256,6 +279,8 @@ const Workspace = () => {
     setArtifactNameOverrides({})
     setHiddenArtifacts(new Set())
     setSyncedArtifacts(new Set())
+    setArtifactFeedback({})
+    setTranscriptFeedback({})
   }, [id])
 
   useEffect(() => {
@@ -323,38 +348,86 @@ const Workspace = () => {
 
   const artifactTabs = useMemo(() => {
     if (!list) return []
+
+    const typeLabelMap: Record<string, string> = {
+      meeting_minutes: '纪要',
+      summary_notes: '摘要',
+      action_items: '行动项',
+    }
+
     const entries = Object.values(list.artifacts_by_type)
       .flat()
-      .sort((a, b) => {
-        if (a.artifact_type !== b.artifact_type) return a.artifact_type.localeCompare(b.artifact_type)
-        if (a.version !== b.version) return a.version - b.version
-        return a.artifact_id.localeCompare(b.artifact_id)
+      .map((item) => ({
+        ...item,
+        task_id: (item as any).task_id ?? id,
+      }))
+      .filter((item) => {
+        const taskId = (item as { task_id?: string }).task_id
+        if (!taskId) return true
+        return taskId === id
       })
-    const filtered = entries.filter((item) => {
-      const taskId = (item as { task_id?: string }).task_id
-      if (!taskId) return true
-      return taskId === id
+      .filter((item) => !hiddenArtifacts.has(item.artifact_id))
+
+    // 按 display_name 分组重新计算版本号
+    const groups = new Map<string, typeof entries>()
+    const getCreated = (it: any) => new Date(it.created_at || 0).getTime()
+    const keyFor = (it: any) =>
+      (
+        (it as any).name?.trim() ||
+        it.display_name?.trim() ||
+        (it.artifact_type ? typeLabelMap[it.artifact_type] || it.artifact_type : undefined) ||
+        (it.artifact_type === 'meeting_minutes' ? currentTask?.meeting_type : undefined) ||
+        'artifact'
+      ).trim()
+
+    // 排序整体，确保时间顺序稳定
+    const sorted = [...entries].sort((a, b) => getCreated(a) - getCreated(b))
+    sorted.forEach((item) => {
+      const key = keyFor(item)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)?.push(item)
     })
-    const visible = filtered.filter((item) => !hiddenArtifacts.has(item.artifact_id))
-    return visible.map((item) => {
-      const isMinutes = item.artifact_type === 'meeting_minutes'
-      const isDefaultMinutes = isMinutes && item.version === 1
-      const baseName = artifactNameOverrides[item.artifact_id] || item.artifact_type || 'artifact'
-      const baseMinutesLabel = '纪要'
-      const label = isMinutes
-        ? isDefaultMinutes
-          ? baseMinutesLabel
-          : `${baseMinutesLabel} v${item.version}`
-        : item.version === 1
-        ? baseName
-        : `${baseName} v${item.version}`
-      return {
-        key: item.artifact_id,
-        label,
-        artifact: item,
-        isDefaultMinutes,
-      }
+
+    const result: Array<{
+      key: string
+      label: React.ReactNode
+      artifact: any
+      isDefaultMinutes: boolean
+    }> = []
+
+    Array.from(groups.entries()).forEach(([groupKey, arr]) => {
+      const group = [...arr].sort((a, b) => getCreated(a) - getCreated(b))
+      group.forEach((item, idx) => {
+        const computedVersion = idx + 1
+        const overrideName = artifactNameOverrides[item.artifact_id]
+        const baseName =
+          overrideName ||
+          item.display_name?.trim() ||
+          (item as any).name?.trim() ||
+          groupKey ||
+          (item.artifact_type ? typeLabelMap[item.artifact_type] || item.artifact_type : undefined) ||
+          (item.artifact_type === 'meeting_minutes' ? currentTask?.meeting_type : undefined) ||
+          'artifact'
+        const label = overrideName
+          ? overrideName
+          : computedVersion === 1
+          ? baseName
+          : `${baseName} v${computedVersion}`
+        const isMinutes = item.artifact_type === 'meeting_minutes'
+        const isDefaultMinutes =
+          isMinutes &&
+          item.version === 1 &&
+          (!item.display_name || item.display_name === currentTask?.meeting_type)
+        result.push({
+          key: item.artifact_id,
+          label,
+          artifact: { ...item, computed_version: computedVersion },
+          isDefaultMinutes,
+        })
+      })
     })
+
+    return result
   }, [list, artifactNameOverrides, hiddenArtifacts, id])
 
 
@@ -385,15 +458,33 @@ const Workspace = () => {
   )
 
   const initialConfigValues: Partial<CreateTaskFormValues> = useMemo(() => {
+    const metaPrompt = (activeArtifactInfo?.metadata as any)?.prompt
     const stripVersion = (name?: string) => (name ? name.replace(/\s*v\d+$/i, '').trim() : '')
     const tabLabel = artifactTabs.find((tab) => tab.key === activeArtifact)?.label
     const baseName =
-      stripVersion(artifactNameOverrides[activeArtifact || ''] || tabLabel) ||
+      stripVersion(
+        artifactNameOverrides[activeArtifact || ''] ||
+          activeArtifactInfo?.display_name ||
+          tabLabel ||
+          activeArtifactInfo?.artifact_type
+      ) ||
       (activeArtifactInfo?.artifact_type === 'meeting_minutes' ? '纪要' : activeArtifactInfo?.artifact_type) ||
       currentTask?.meeting_type ||
       '纪要'
 
     const meetingName = baseName || '纪要'
+
+    // 创建新笔记时不预填名称/模板，避免默认“纪要”或沿用上一个模板
+    if (configMode === 'create') {
+      return {
+        meeting_type: '',
+        output_language: currentTask?.output_language,
+        asr_languages: currentTask?.asr_language ? currentTask.asr_language.split('+') : [],
+        skip_speaker_recognition: false,
+        description: '',
+        template_id: undefined,
+      }
+    }
 
     if (!currentTask) return { meeting_type: meetingName }
 
@@ -403,9 +494,20 @@ const Workspace = () => {
       asr_languages: currentTask.asr_language ? currentTask.asr_language.split('+') : [],
       skip_speaker_recognition: false,
       description: '',
-      template_id: activeArtifactInfo?.prompt_instance?.template_id,
+      template_id:
+        localTemplate?.template_id ||
+        metaPrompt?.template_id ||
+        activeArtifactInfo?.prompt_instance?.template_id ||
+        (metaPrompt?.template_id === '__blank__' ? '__blank__' : undefined),
+      prompt_text:
+        localTemplate?.prompt_body ||
+        metaPrompt?.prompt_text ||
+        (metaPrompt?.template_id === '__blank__' ? metaPrompt?.prompt_body : undefined) ||
+        activeArtifactInfo?.prompt_instance?.prompt_text ||
+        activeArtifactInfo?.prompt_instance?.prompt_body ||
+        undefined,
     }
-  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs, artifactNameOverrides])
+  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs, artifactNameOverrides, configMode, localTemplate])
 
   const listFilter = useMemo(() => new URLSearchParams(location.search).get('folder'), [location.search])
   const editorToolbar = useMemo(
@@ -615,22 +717,36 @@ const Workspace = () => {
   const handleRegenerate = async (values: CreateTaskFormValues) => {
     if (!id) return
     try {
+      const metaPrompt = (activeArtifactInfo?.metadata as any)?.prompt
       const artifactName = values.meeting_type?.trim() || ''
       const promptText =
+        (values.prompt_text?.trim() || '') ||
         (localTemplate?.prompt_body && localTemplate.prompt_body.trim()) ||
         (configMode === 'regenerate' && activeArtifact && promptOverrides[activeArtifact]?.prompt_body?.trim()) ||
+        (activeArtifactInfo?.prompt_instance?.prompt_text?.trim() || '') ||
         ''
+      const templateId = values.template_id || localTemplate?.template_id || activeArtifactInfo?.prompt_instance?.template_id
+      if (templateId === '__blank__' && !promptText) {
+        message.error('空白模板必须填写提示词')
+        return
+      }
       const payload = {
+        ...(artifactName ? { name: artifactName } : {}),
+        ...(artifactName ? { name: artifactName } : {}),
         prompt_instance: {
-          template_id: values.template_id || activeArtifactInfo?.prompt_instance?.template_id || 'tmpl_rec_1',
+          template_id: templateId || activeArtifactInfo?.prompt_instance?.template_id || 'tmpl_rec_1',
           language: values.output_language || currentTask?.output_language || 'zh-CN',
-          prompt_text: promptText,
+          ...(promptText ? { prompt_text: promptText } : {}),
           parameters: {
             meeting_description: values.description || '',
           },
         },
       }
-      const res = await regenerate(id, payload)
+      const artifactType =
+        configMode === 'create'
+          ? localTemplate?.artifact_type || metaPrompt?.artifact_type || 'meeting_minutes'
+          : activeArtifactInfo?.artifact_type || 'meeting_minutes'
+      const res = await regenerate(id, artifactType, payload)
       message.success(`已重新生成，版本 v${res.version}`)
       setConfigDrawerOpen(false)
       if (localTemplate?.prompt_body?.trim() && res.artifact_id) {
@@ -644,10 +760,10 @@ const Workspace = () => {
           },
         }))
       }
-      await fetchList(id)
       if (artifactName && res.artifact_id) {
         setArtifactNameOverrides((prev) => ({ ...prev, [res.artifact_id]: artifactName }))
       }
+      await fetchList(id)
     } catch (err) {
       message.error((err as Error)?.message || '重新生成失败')
     }
@@ -670,7 +786,14 @@ const Workspace = () => {
       ].join('\n')
       const content = `${header}\n\n${currentMarkdown}`
       const inlined = await inlineImages(content)
-      if (navigator.clipboard?.writeText) {
+      const html = markdownToBasicHtml(inlined)
+      if (navigator.clipboard?.write) {
+        const item = new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([inlined], { type: 'text/plain' }),
+        })
+        await navigator.clipboard.write([item])
+      } else if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(inlined)
       } else {
         const textarea = document.createElement('textarea')
@@ -693,13 +816,27 @@ const Workspace = () => {
     }
   }
 
-  const handleFeedback = (type: "like" | "dislike", reason?: string) => {
-  if (type === "dislike") {
-    console.log("Dislike reason:", reason)
-    return
+  const handleArtifactFeedback = (type: 'like' | 'dislike', reason?: string) => {
+    if (!activeArtifact) return
+    setArtifactFeedback((prev) => ({ ...prev, [activeArtifact]: type }))
+    // TODO: 接入后端反馈接口时在此提交 reason/type（artifact 维度）
+    if (type === 'dislike') {
+      console.log('Artifact dislike reason:', reason)
+      return
+    }
+    console.log('Artifact feedback:', type)
   }
-  console.log("Feedback:", type)
-}
+
+  const handleTranscriptFeedback = (type: 'like' | 'dislike', reason?: string) => {
+    const taskId = id || 'current_task'
+    setTranscriptFeedback((prev) => ({ ...prev, [taskId]: type }))
+    // TODO: 接入后端反馈接口时在此提交 reason/type（transcript 维度）
+    if (type === 'dislike') {
+      console.log('Transcript dislike reason:', reason)
+      return
+    }
+    console.log('Transcript feedback:', type)
+  }
 
   const renderStatusText = (status: 'saved' | 'saving' | 'error') => {
     if (status === 'saving') return '保存中...'
@@ -870,6 +1007,9 @@ const taskFolderTarget = useMemo(() => {
     const tplId = activeArtifactInfo?.prompt_instance?.template_id
     const metaPrompt = (currentArtifactDetail?.artifact as any)?.metadata?.prompt
     const promptText = override?.prompt_body || metaPrompt?.prompt_text || activeArtifactInfo?.prompt_instance?.prompt_text
+    const metaTitle =
+      (override?.title && override.title.toLowerCase() !== '__blank__' ? override.title : undefined) ||
+      (metaPrompt?.title && metaPrompt.title.toLowerCase() !== '__blank__' ? metaPrompt.title : undefined)
 
     if (!tplId && !override?.prompt_body && !promptText) {
       message.info('当前版本没有提示词')
@@ -881,11 +1021,7 @@ const taskFolderTarget = useMemo(() => {
     const promptBody = override?.prompt_body || promptText
     if (promptBody) {
       const fallbackId = tplId || metaPrompt?.template_id || 'temp_template'
-      const title = resolvePromptTitle(
-        override?.template_id || metaPrompt?.template_id || tplId,
-        override?.title || metaPrompt?.title,
-        true
-      )
+      const title = resolvePromptTitle(override?.template_id || metaPrompt?.template_id || tplId, metaTitle, true)
       setPromptTemplate({
         template_id: override?.template_id || metaPrompt?.template_id || fallbackId,
         title,
@@ -972,9 +1108,47 @@ const taskFolderTarget = useMemo(() => {
   }, [saveTranscript, saveArtifact, activeArtifact])
 
   const handleCreateArtifact = () => {
+    setLocalTemplate(null)
     setConfigMode('create')
+    setConfigFormKey((k) => k + 1)
     setConfigDrawerOpen(true)
   }
+
+  useEffect(() => {
+    if (!configDrawerOpen || !activeArtifactInfo || configMode === 'create') return
+    // 将当前 artifact 的模板信息同步到抽屉
+    const metaPrompt = (activeArtifactInfo.metadata as any)?.prompt
+    const override = promptOverrides[activeArtifactInfo.artifact_id]
+    const templateId = activeArtifactInfo.prompt_instance?.template_id || '__blank__'
+    const storeTpl = templates.find((tpl) => tpl.template_id === templateId)
+    const promptBody =
+      override?.prompt_body ||
+      metaPrompt?.prompt_text ||
+      metaPrompt?.prompt_body ||
+      activeArtifactInfo.prompt_instance?.prompt_text ||
+      activeArtifactInfo.prompt_instance?.prompt_body ||
+      ''
+    const isBlank = templateId === '__blank__'
+    const hasEdited =
+      Boolean(override?.prompt_body) ||
+      Boolean(metaPrompt?.prompt_text) ||
+      Boolean(activeArtifactInfo.prompt_instance?.prompt_text)
+    const baseTitle = override?.title || metaPrompt?.title || storeTpl?.title
+    const title = resolvePromptTitle(templateId, baseTitle, hasEdited)
+    const synced: Template = {
+      template_id: templateId,
+      title,
+      description: override?.description || metaPrompt?.description || storeTpl?.description || '',
+      prompt_body: promptBody,
+      artifact_type: activeArtifactInfo.artifact_type || 'meeting_minutes',
+      is_system: false,
+      supported_languages: ['zh-CN'],
+      scope: 'private',
+      created_at: '',
+      updated_at: '',
+    }
+    setLocalTemplate(synced)
+  }, [configDrawerOpen, activeArtifactInfo, promptOverrides, templates])
 
   return (
     <div className="page-container workspace-page">
@@ -1039,10 +1213,21 @@ const taskFolderTarget = useMemo(() => {
                   />
                   <div className="workspace-pane__divider workspace-pane__divider--inset" />
                   <div className="workspace-feedback">
-                        <Button size="small" icon={<LikeOutlined />} onClick={() => handleFeedback('like')}>
+                        <Button
+                          size="small"
+                          type={(transcriptFeedback[id || 'current_task'] || '') === 'like' ? 'primary' : 'default'}
+                          icon={<LikeOutlined />}
+                          onClick={() => handleTranscriptFeedback('like')}
+                        >
                           满意
                         </Button>
-                        <Button size="small" icon={<DislikeOutlined />} onClick={() => handleFeedback('dislike')}>
+                        <Button
+                          size="small"
+                          type={(transcriptFeedback[id || 'current_task'] || '') === 'dislike' ? 'primary' : 'default'}
+                          danger={(transcriptFeedback[id || 'current_task'] || '') === 'dislike'}
+                          icon={<DislikeOutlined />}
+                          onClick={() => handleTranscriptFeedback('dislike')}
+                        >
                           不满意
                         </Button>
                   </div>
@@ -1079,9 +1264,7 @@ const taskFolderTarget = useMemo(() => {
                     }}
                     items={artifactTabs.map((tab) => {
                       const menuItems = [
-                        ...(tab.artifact.artifact_type === 'meeting_minutes'
-                          ? []
-                          : [{ key: 'rename', label: '重命名', icon: <EditOutlined /> }]),
+                        ...(tab.isDefaultMinutes ? [] : [{ key: 'rename', label: '重命名', icon: <EditOutlined /> }]),
                         { key: 'regenerate', label: '重新生成', icon: <RedoOutlined className="workspace-tab-action-icon" /> },
                         ...(tab.isDefaultMinutes ? [] : [{ key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true }]),
                       ]
@@ -1182,10 +1365,21 @@ const taskFolderTarget = useMemo(() => {
                     <>
                       <div className="workspace-pane__divider workspace-pane__divider--inset" />
                       <div className="workspace-feedback workspace-feedback--aligned">
-                        <Button size="small" icon={<LikeOutlined />} onClick={() => handleFeedback('like')}>
+                        <Button
+                          size="small"
+                          type={artifactFeedback[activeArtifact || ''] === 'like' ? 'primary' : 'default'}
+                          icon={<LikeOutlined />}
+                          onClick={() => handleArtifactFeedback('like')}
+                        >
                           满意
                         </Button>
-                        <Button size="small" icon={<DislikeOutlined />} onClick={() => handleFeedback('dislike')}>
+                        <Button
+                          size="small"
+                          type={artifactFeedback[activeArtifact || ''] === 'dislike' ? 'primary' : 'default'}
+                          danger={artifactFeedback[activeArtifact || ''] === 'dislike'}
+                          icon={<DislikeOutlined />}
+                          onClick={() => handleArtifactFeedback('dislike')}
+                        >
                           不满意
                         </Button>
                       </div>
@@ -1226,12 +1420,14 @@ const taskFolderTarget = useMemo(() => {
         styles={{ body: { paddingBottom: 80 } }}
       >
         <TaskConfigForm
+          key={configFormKey}
           initialValues={initialConfigValues}
           onFinish={handleRegenerate}
           submitText={configMode === 'create' ? '确认并生成' : '确认并重新生成'}
           meetingTypeLabel="名称"
           meetingTypePlaceholder="默认使用当前名称"
           templateOverride={localTemplate}
+          disableDefaultTemplate={configMode === 'create'}
           onTemplateChange={setLocalTemplate}
         />
       </Drawer>

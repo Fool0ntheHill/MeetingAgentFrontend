@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type TaskRunStatus = 'PENDING' | 'PROCESSING' | 'PAUSED' | 'SUCCESS' | 'FAILED'
+export type TaskRunStatus = 'PENDING' | 'PROCESSING' | 'PAUSED' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
 export type StepStatus = 'pending' | 'processing' | 'paused' | 'success' | 'failed'
 
 export interface TaskStep {
@@ -83,7 +83,7 @@ const buildSteps = (status: TaskRunStatus, progress: number, phase?: string): Ta
   const currentIndex = resolveStageIndex(phase, progress)
   return STEP_TITLES.map((title, index) => {
     if (status === 'SUCCESS') return { id: `${index}`, title, status: 'success' }
-    if (status === 'FAILED') {
+    if (status === 'FAILED' || status === 'CANCELLED') {
       if (index < currentIndex) return { id: `${index}`, title, status: 'success' }
       if (index === currentIndex) return { id: `${index}`, title, status: 'failed' }
       return { id: `${index}`, title, status: 'pending' }
@@ -258,8 +258,9 @@ export const useTaskRunnerStore = create<TaskRunnerState>((set, get) => ({
         ...state.tasks,
         [taskId]: {
           ...task,
-          status: 'FAILED',
-          steps: buildSteps('FAILED', task.progress, task.phase),
+          status: 'CANCELLED',
+          phase: 'cancelled',
+          steps: buildSteps('CANCELLED', task.progress, 'cancelled'),
           updatedAt: Date.now(),
         },
       },
