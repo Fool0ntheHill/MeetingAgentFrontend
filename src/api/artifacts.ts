@@ -1,6 +1,7 @@
 import { request } from './request'
 import type {
   ArtifactDetailResponse,
+  ArtifactStatusResponse,
   GenerateArtifactRequest,
   GenerateArtifactResponse,
   ListArtifactsResponse,
@@ -24,7 +25,7 @@ export const regenerateArtifact = (taskId: string, artifactType: string, payload
     url: `/tasks/${taskId}/artifacts/${artifactType}/generate`,
     method: 'POST',
     data: payload,
-    timeout: 1200000, // 生成耗时较长，延长超时到 1200s
+    timeout: 60000, // 异步生成接口快速返回，1 分钟兜底
   })
 
 export const updateArtifact = (artifactId: string, content: string) =>
@@ -38,4 +39,10 @@ export const deleteArtifact = (taskId: string, artifactId: string) =>
   request<DeleteArtifactResponse>({
     url: `/tasks/${taskId}/artifacts/${artifactId}`,
     method: 'DELETE',
+  })
+
+export const getArtifactStatus = (artifactId: string) =>
+  request<ArtifactStatusResponse>({
+    url: `/artifacts/${artifactId}/status`,
+    method: 'GET',
   })

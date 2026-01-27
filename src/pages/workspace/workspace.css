@@ -252,6 +252,10 @@
   cursor: pointer;
 }
 
+.workspace-tab-label.is-pending {
+  opacity: 0.6;
+}
+
 .workspace-tab-label__name {
   line-height: 1.2;
 }

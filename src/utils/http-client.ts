@@ -6,7 +6,10 @@ import type { AxiosProgressEvent, AxiosRequestConfig } from 'axios'
 export function jumpToLogin() {
   const APP_ID = 'app_meeting_agent'
   const redirectUri = encodeURIComponent('http://localhost:8000/api/v1/auth/callback')
-  window.location.href = `https://gsuc.gamesci.com.cn/sso/login?appid=${APP_ID}&redirect_uri=${redirectUri}`
+  const state = crypto?.randomUUID?.() ?? `${Date.now()}`
+  window.location.href = `https://gsuc.gamesci.com.cn/sso/login?appid=${APP_ID}&redirect_uri=${redirectUri}&state=${encodeURIComponent(
+    state
+  )}`
 }
 
 /** 初始化登录：解析 URL token 或本地 token */

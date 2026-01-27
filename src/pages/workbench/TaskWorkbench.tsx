@@ -357,16 +357,16 @@ const TaskWorkbench = () => {
       okText: "确认取消",
       cancelText: "取消",
       okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          await cancelTask(id)
-          abortTask(id)
-          message.success("已提交取消请求")
-        } catch (err) {
-          message.error((err as Error)?.message || "取消任务失败")
-          return Promise.reject()
-        }
-      },
+      onOk: () =>
+        cancelTask(id)
+          .then(() => {
+            abortTask(id)
+            message.success("已提交取消请求")
+          })
+          .catch((err) => {
+            message.error((err as Error)?.message || "取消任务失败")
+            return Promise.reject(err)
+          }),
     })
   }
 

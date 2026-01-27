@@ -39,6 +39,8 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
   const [playbackRate, setPlaybackRate] = useState(1)
   const [volume, setVolume] = useState(80)
   const [isLoading, setIsLoading] = useState(true)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragTime, setDragTime] = useState(0)
 
   useEffect(() => {
     const el = audioRef.current
@@ -57,8 +59,10 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
     }
     const onTime = () => {
       const time = el.currentTime || 0
-      setCurrentTime(time)
-      onTimeUpdate?.(time)
+      if (!isDragging) {
+        setCurrentTime(time)
+        onTimeUpdate?.(time)
+      }
     }
     const onPlay = () => setIsPlaying(true)
     const onPause = () => setIsPlaying(false)
@@ -121,11 +125,13 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  const displayTime = isDragging ? dragTime : currentTime
+
   return (
     <div className="workspace-audio">
       <div className="workspace-audio__controls">
         <div className="workspace-audio__time">
-          {formatTime(currentTime)} / {formatTime(duration)}
+          {formatTime(displayTime)} / {formatTime(duration)}
         </div>
 
         <div className="workspace-audio__center">
@@ -186,10 +192,15 @@ const AudioPlayer = forwardRef<AudioPlayerRef, AudioPlayerProps>(({ url, onTimeU
             min={0}
             max={Math.max(duration, 0.1)}
             step={0.1}
-            value={Math.min(currentTime, duration || 0)}
-            onChange={(value) => setCurrentTime(value as number)}
+            value={Math.min(displayTime, duration || 0)}
+            onChange={(value) => {
+              setIsDragging(true)
+              setDragTime(value as number)
+            }}
             onAfterChange={(value) => {
               const time = value as number
+              setIsDragging(false)
+              setCurrentTime(time)
               if (audioRef.current) {
                 audioRef.current.currentTime = time
                 if (!isPlaying) {

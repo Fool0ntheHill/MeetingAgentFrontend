@@ -47,7 +47,7 @@ type StoredFolder = {
 const AppLayout = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { logout, username, hydrate } = useAuthStore()
+  const { logout, username, account, hydrate } = useAuthStore()
   const { list: taskList, fetchList, trashTotal, fetchTrash } = useTaskStore()
   const { folders, fetch: fetchFolders, add, rename, remove } = useFolderStore()
   const [collapsed, setCollapsed] = useState(false)
@@ -214,7 +214,9 @@ const AppLayout = () => {
                   <Typography.Text strong style={{ fontSize: 14, color: '#2e2e2e' }}>
                     {username || '未登录'}
                   </Typography.Text>
-                  <div style={{ fontSize: 12, color: '#7a7a7a' }}>ID: {username ? `user_${username}` : '待登录'}</div>
+                  <div style={{ fontSize: 12, color: '#7a7a7a' }}>
+                    ID: {account || '待登录'}
+                  </div>
                 </div>
               )}
             </Space>

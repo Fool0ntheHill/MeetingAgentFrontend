@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Drawer, Dropdown, Input, Modal, Tabs, Tooltip, Typography, message } from 'antd'
+import { Button, Drawer, Dropdown, Input, Modal, Tabs, Tooltip, Typography, message, Spin } from 'antd'
 import {
   DeleteOutlined,
   DislikeOutlined,
@@ -21,7 +21,7 @@ import { useTaskStore } from '@/store/task'
 import { useFolderStore } from '@/store/folder'
 import { useArtifactStore } from '@/store/artifact'
 import { correctSpeakers, correctTranscript } from '@/api/tasks'
-import { updateArtifact, deleteArtifact } from '@/api/artifacts'
+import { updateArtifact, deleteArtifact, getArtifactStatus } from '@/api/artifacts'
 import type VditorType from 'vditor'
 import { useTemplateStore } from '@/store/template'
 import { useAuthStore } from '@/store/auth'
@@ -93,6 +93,11 @@ const resolveMarkdown = (raw: Record<string, unknown> | Array<Record<string, unk
   if (!raw) return ''
   const obj = Array.isArray(raw) ? (raw[0] as Record<string, unknown> | undefined) ?? {} : raw
   if (!obj || (typeof obj === 'object' && Object.keys(obj).length === 0)) return ''
+  // 后端占位/失败提示
+  if (typeof obj.status === 'string') {
+    const msg = (obj as any).message || (obj as any).error_message || ''
+    return msg ? String(msg) : `状态：${obj.status}`
+  }
   const direct =
     (typeof obj.content === 'string' && obj.content.trim()) ||
     (typeof obj.markdown === 'string' && obj.markdown.trim())
@@ -156,6 +161,20 @@ const markdownToBasicHtml = (md: string) => {
   return `<div>${html}</div>`
 }
 
+const buildWatermarkHtml = (username?: string | null) => {
+  const now = new Date()
+  const timeStr = now.toLocaleString('zh-CN', { hour12: false })
+  const owner = username || '未指定'
+  const line = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  return [
+    `<p style="margin: 0;"><b style="color: #d97373;">${line}</b></p>`,
+    `<p style="margin: 5px 0;"><b>生成时间：</b>${timeStr}</p>`,
+    `<p style="margin: 5px 0;"><b>责任人：</b>${owner}</p>`,
+    `<p style="margin: 5px 0;"><b style="color: #d97373;">AI 声明：</b><span style="color: #d97373;">本纪要初稿由 AI 模型生成，已由责任人校对确认。</span></p>`,
+    `<p style="margin: 0 0 20px 0;"><b style="color: #d97373;">${line}</b></p>`,
+  ].join('')
+}
+
 const MoveFolderIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6">
     <path d="M3 7.5h7l1.8-2h9.2a1 1 0 0 1 1 1v10.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1z" />
@@ -174,7 +193,7 @@ const FindReplaceIcon = () => (
 
 const Workspace = () => {
   const { id } = useParams<{ id: string }>()
-  const { username, userId } = useAuthStore()
+  const { username, userId, tenantId } = useAuthStore()
   const { fetchDetail, currentTask, fetchTranscript, transcript } = useTaskStore()
   const {
     fetchList,
@@ -186,7 +205,7 @@ const Workspace = () => {
     current: currentArtifactDetail,
   } = useArtifactStore()
   const { folders, fetch: fetchFolders } = useFolderStore()
-  const { getDetail: getTemplateDetail, create: createTemplate, templates } = useTemplateStore()
+  const { getDetail: getTemplateDetail, create: createTemplate, templates, fetchTemplates } = useTemplateStore()
 
   const audioPlayerRef = useRef<AudioPlayerRef>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -210,6 +229,7 @@ const Workspace = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const [artifactNameOverrides, setArtifactNameOverrides] = useState<Record<string, string>>({})
+  const [pendingArtifacts, setPendingArtifacts] = useState<Record<string, { name: string; artifact_type: string }>>({})
   const [promptOverrides, setPromptOverrides] = useState<Record<string, PromptOverride>>(() => {
     if (typeof window === 'undefined') return {}
     try {
@@ -231,6 +251,7 @@ const Workspace = () => {
   const [transcriptFeedback, setTranscriptFeedback] = useState<Record<string, 'like' | 'dislike' | null>>({})
   const transcriptHistoryTimer = useRef<number | null>(null)
   const transcriptSnapshotRef = useRef<TranscriptParagraph[]>([])
+  const statusTimersRef = useRef<Record<string, number>>({})
   const applyingHistoryRef = useRef(false)
   const paragraphsRef = useRef<TranscriptParagraph[]>(paragraphs)
   const reviewContentRef = useRef<HTMLDivElement>(null)
@@ -347,7 +368,26 @@ const Workspace = () => {
   }, [activeArtifact, dirtyByArtifact])
 
   const artifactTabs = useMemo(() => {
-    if (!list) return []
+    const base: Array<{
+      key: string
+      label: React.ReactNode
+      artifact: any
+      isDefaultMinutes: boolean
+      processing?: boolean
+    }> = []
+    if (!list) {
+      // 当列表未加载时，也允许展示 pending 占位
+      Object.entries(pendingArtifacts).forEach(([id, info]) => {
+        base.push({
+          key: id,
+          label: info.name || '生成中',
+          artifact: { artifact_id: id, artifact_type: info.artifact_type },
+          isDefaultMinutes: false,
+          processing: true,
+        })
+      })
+      return base
+    }
 
     const typeLabelMap: Record<string, string> = {
       meeting_minutes: '纪要',
@@ -370,7 +410,12 @@ const Workspace = () => {
 
     // 按 display_name 分组重新计算版本号
     const groups = new Map<string, typeof entries>()
-    const getCreated = (it: any) => new Date(it.created_at || 0).getTime()
+    const getCreated = (it: any) => {
+      const ts = new Date(it.created_at || '').getTime()
+      if (Number.isFinite(ts) && ts > 0) return ts
+      // fallback: use backend version to keep顺序，新版在后
+      return (it.version ?? 0) * 1000
+    }
     const keyFor = (it: any) =>
       (
         (it as any).name?.trim() ||
@@ -393,12 +438,13 @@ const Workspace = () => {
       label: React.ReactNode
       artifact: any
       isDefaultMinutes: boolean
+      processing?: boolean
     }> = []
 
     Array.from(groups.entries()).forEach(([groupKey, arr]) => {
       const group = [...arr].sort((a, b) => getCreated(a) - getCreated(b))
       group.forEach((item, idx) => {
-        const computedVersion = idx + 1
+        const computedVersion = item.version ?? idx + 1
         const overrideName = artifactNameOverrides[item.artifact_id]
         const baseName =
           overrideName ||
@@ -408,27 +454,53 @@ const Workspace = () => {
           (item.artifact_type ? typeLabelMap[item.artifact_type] || item.artifact_type : undefined) ||
           (item.artifact_type === 'meeting_minutes' ? currentTask?.meeting_type : undefined) ||
           'artifact'
-        const label = overrideName
-          ? overrideName
-          : computedVersion === 1
-          ? baseName
-          : `${baseName} v${computedVersion}`
+        const label =
+          computedVersion === 1 ? baseName : `${baseName} v${computedVersion}`
         const isMinutes = item.artifact_type === 'meeting_minutes'
-        const isDefaultMinutes =
-          isMinutes &&
-          item.version === 1 &&
-          (!item.display_name || item.display_name === currentTask?.meeting_type)
+        const isDefaultMinutes = isMinutes && computedVersion === 1
         result.push({
           key: item.artifact_id,
           label,
           artifact: { ...item, computed_version: computedVersion },
           isDefaultMinutes,
+          processing: (item as any).state === 'processing',
         })
       })
     })
 
     return result
-  }, [list, artifactNameOverrides, hiddenArtifacts, id])
+      // 追加 pending 占位（尚未出现在列表里的）
+      Object.entries(pendingArtifacts).forEach(([id, info]) => {
+        const exists = result.some((r) => r.key === id)
+        if (!exists) {
+          result.push({
+            key: id,
+            label: info.name || '生成中',
+            artifact: { artifact_id: id, artifact_type: info.artifact_type },
+            isDefaultMinutes: false,
+            processing: true,
+          })
+        }
+      })
+
+    // 如果当前激活的是待生成的占位，也确保被渲染出来
+    if (
+      activeArtifact &&
+      pendingArtifacts[activeArtifact] &&
+      !result.some((r) => r.key === activeArtifact)
+    ) {
+      const info = pendingArtifacts[activeArtifact]
+      result.push({
+        key: activeArtifact,
+        label: info.name || '生成中',
+        artifact: { artifact_id: activeArtifact, artifact_type: info.artifact_type },
+        isDefaultMinutes: false,
+        processing: true,
+      })
+    }
+
+    return result
+  }, [list, artifactNameOverrides, hiddenArtifacts, id, pendingArtifacts, activeArtifact])
 
 
   useEffect(() => {
@@ -439,6 +511,8 @@ const Workspace = () => {
       if (!taskId) return true
       return taskId === id
     })
+    // 如果当前激活的 artifact 仍在 pending，占位即可，无需切走
+    if (activeArtifact && pendingArtifacts[activeArtifact]) return
     if (filtered.length === 0) return
     const currentActive = filtered.find((item) => item.artifact_id === activeArtifact)
     const next = currentActive ?? filtered[0]
@@ -450,12 +524,24 @@ const Workspace = () => {
         if (artifactData) syncPromptOverride(next.artifact_id, artifactData)
       })
     }
-  }, [list, id, activeArtifact, fetchArtifactDetail, syncPromptOverride])
+  }, [list, id, activeArtifact, fetchArtifactDetail, syncPromptOverride, pendingArtifacts])
 
   const activeArtifactInfo = useMemo(
     () => artifactTabs.find((tab) => tab.key === activeArtifact)?.artifact,
     [artifactTabs, activeArtifact]
   )
+
+  // 当列表里已经有对应 artifact 时，清理 pending，占位避免重复
+  useEffect(() => {
+    if (!list) return
+    const existingIds = new Set<string>()
+    Object.values(list.artifacts_by_type || {}).forEach((arr) => {
+      arr?.forEach((item) => existingIds.add(item.artifact_id))
+    })
+    setPendingArtifacts((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([id]) => !existingIds.has(id)))
+    )
+  }, [list])
 
   const initialConfigValues: Partial<CreateTaskFormValues> = useMemo(() => {
     const metaPrompt = (activeArtifactInfo?.metadata as any)?.prompt
@@ -507,7 +593,29 @@ const Workspace = () => {
         activeArtifactInfo?.prompt_instance?.prompt_body ||
         undefined,
     }
-  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs, artifactNameOverrides, configMode, localTemplate])
+  }, [currentTask, activeArtifactInfo, activeArtifact, artifactTabs, artifactNameOverrides, configMode])
+
+  // 将待生成的占位与已有 tabs 合并，确保无刷新也可见
+    const displayTabs = useMemo(() => {
+      const seen = new Set<string>()
+      const items = artifactTabs.map((tab) => {
+        seen.add(tab.key)
+        return tab
+      })
+      Object.entries(pendingArtifacts).forEach(([id, info]) => {
+        if (seen.has(id)) return
+        items.push({
+          key: id,
+          label: info.name || '生成中',
+          artifact: { artifact_id: id, artifact_type: info.artifact_type },
+          isDefaultMinutes: false,
+          processing: true,
+        })
+        seen.add(id)
+      })
+      // activeArtifact 若已在 pendingArtifacts 中，前面的循环已经加入并标记 seen，不再重复追加
+      return items
+    }, [artifactTabs, pendingArtifacts, activeArtifact])
 
   const listFilter = useMemo(() => new URLSearchParams(location.search).get('folder'), [location.search])
   const editorToolbar = useMemo(
@@ -530,6 +638,48 @@ const Workspace = () => {
       setIsConfirmed(false)
     }
   }
+
+  const pollArtifactStatus = useCallback(
+    (artifactId: string) => {
+      if (!artifactId) return
+      // 确保占位存在并切换到它
+      setPendingArtifacts((prev) => {
+        if (prev[artifactId]) return prev
+        return {
+          ...prev,
+          [artifactId]: { name: '生成中', artifact_type: 'meeting_minutes' },
+        }
+      })
+      setActiveArtifact((prev) => prev || artifactId)
+      const tick = async () => {
+        try {
+          const status = await getArtifactStatus(artifactId)
+          if (status.state === 'processing') {
+            statusTimersRef.current[artifactId] = window.setTimeout(tick, 2000)
+            return
+          }
+          if (status.state === 'failed') {
+            message.error(status.error?.message || '生成失败')
+          } else {
+            message.success('生成成功')
+          }
+          if (id) {
+            await fetchList(id)
+          }
+          setPendingArtifacts((prev) => {
+            const next = { ...prev }
+            delete next[artifactId]
+            return next
+          })
+        } catch (error) {
+          // 网络波动重试
+          statusTimersRef.current[artifactId] = window.setTimeout(tick, 3000)
+        }
+      }
+      tick()
+    },
+    [fetchList, id]
+  )
 
   const cloneParagraphs = useCallback((items: TranscriptParagraph[]) => items.map((p) => ({ ...p })), [])
 
@@ -592,11 +742,18 @@ const Workspace = () => {
   const saveTranscript = useCallback(async () => {
     if (!id) return
     const text = paragraphs.map((p) => `[${p.speaker}] ${p.text}`).join('\n')
+    const segments = paragraphs.map((p) => ({
+      text: p.text,
+      start_time: p.start_time,
+      end_time: p.end_time,
+      speaker: p.speaker,
+      confidence: (p as any).confidence,
+    }))
     setTranscriptStatus('saving')
     try {
-      await correctTranscript(id, { corrected_text: text, regenerate_artifacts: false })
+      await correctTranscript(id, { corrected_text: text, segments, regenerate_artifacts: false })
       if (Object.keys(speakerMap).length > 0) {
-        await correctSpeakers(id, { speaker_mapping: speakerMap, regenerate_artifacts: false })
+        await correctSpeakers(id, { speaker_mapping: speakerMap, segments, regenerate_artifacts: false })
       }
       transcriptSnapshotRef.current = cloneParagraphs(paragraphs)
       setTranscriptDirty(false)
@@ -747,7 +904,7 @@ const Workspace = () => {
           ? localTemplate?.artifact_type || metaPrompt?.artifact_type || 'meeting_minutes'
           : activeArtifactInfo?.artifact_type || 'meeting_minutes'
       const res = await regenerate(id, artifactType, payload)
-      message.success(`已重新生成，版本 v${res.version}`)
+      message.loading({ content: '已提交，后台生成中...', key: 'artifact-gen', duration: 2 })
       setConfigDrawerOpen(false)
       if (localTemplate?.prompt_body?.trim() && res.artifact_id) {
         setPromptOverrides((prev) => ({
@@ -763,7 +920,24 @@ const Workspace = () => {
       if (artifactName && res.artifact_id) {
         setArtifactNameOverrides((prev) => ({ ...prev, [res.artifact_id]: artifactName }))
       }
-      await fetchList(id)
+      if (!res.artifact_id) {
+        await fetchList(id)
+        return
+      }
+      setPendingArtifacts((prev) => ({
+        ...prev,
+        [res.artifact_id]: {
+          name: artifactName || '生成中',
+          artifact_type: artifactType,
+        },
+      }))
+      setActiveArtifact(res.artifact_id)
+      setMarkdownByArtifact((prev) => ({
+        ...prev,
+        [res.artifact_id]: '内容生成中，请稍候...',
+      }))
+      setDirtyByArtifact((prev) => ({ ...prev, [res.artifact_id]: false }))
+      pollArtifactStatus(res.artifact_id)
     } catch (err) {
       message.error((err as Error)?.message || '重新生成失败')
     }
@@ -779,14 +953,8 @@ const Workspace = () => {
   const handleCopy = async () => {
     if (!isConfirmed) return
     try {
-      const header = [
-        `生成时间：${new Date().toLocaleString('zh-CN')}`,
-        `负责人：${username || currentTask?.user_id || '未指定'}`,
-        '声明：本内容由 AI 生成，已由人工校对。',
-      ].join('\n')
-      const content = `${header}\n\n${currentMarkdown}`
-      const inlined = await inlineImages(content)
-      const html = markdownToBasicHtml(inlined)
+      const inlined = await inlineImages(currentMarkdown)
+      const html = buildWatermarkHtml(username || currentTask?.user_id) + markdownToBasicHtml(inlined)
       if (navigator.clipboard?.write) {
         const item = new ClipboardItem({
           'text/html': new Blob([html], { type: 'text/html' }),
@@ -816,11 +984,14 @@ const Workspace = () => {
     }
   }
 
+  const showDislikePlaceholder = () => message.info('不满意反馈入口待接入')
+
   const handleArtifactFeedback = (type: 'like' | 'dislike', reason?: string) => {
     if (!activeArtifact) return
     setArtifactFeedback((prev) => ({ ...prev, [activeArtifact]: type }))
     // TODO: 接入后端反馈接口时在此提交 reason/type（artifact 维度）
     if (type === 'dislike') {
+      showDislikePlaceholder()
       console.log('Artifact dislike reason:', reason)
       return
     }
@@ -832,6 +1003,7 @@ const Workspace = () => {
     setTranscriptFeedback((prev) => ({ ...prev, [taskId]: type }))
     // TODO: 接入后端反馈接口时在此提交 reason/type（transcript 维度）
     if (type === 'dislike') {
+      showDislikePlaceholder()
       console.log('Transcript dislike reason:', reason)
       return
     }
@@ -849,6 +1021,13 @@ const Workspace = () => {
       setActiveEditor(null)
     }
   }, [mode])
+
+  useEffect(() => {
+    return () => {
+      Object.values(statusTimersRef.current).forEach((timer) => window.clearTimeout(timer))
+      statusTimersRef.current = {}
+    }
+  }, [])
 
 const pageTitle = currentTask?.meeting_type || currentTask?.task_id || "会议记录"
 const folderLabel = useMemo(() => {
@@ -1007,9 +1186,14 @@ const taskFolderTarget = useMemo(() => {
     const tplId = activeArtifactInfo?.prompt_instance?.template_id
     const metaPrompt = (currentArtifactDetail?.artifact as any)?.metadata?.prompt
     const promptText = override?.prompt_body || metaPrompt?.prompt_text || activeArtifactInfo?.prompt_instance?.prompt_text
+    // 确保模板列表已加载，便于回填标题
+    await fetchTemplates(userId || undefined, tenantId || undefined)
+    const storeTemplates = (useTemplateStore as any).getState?.().templates || templates
+    const storeTpl = tplId ? storeTemplates.find((tpl: Template) => tpl.template_id === tplId) : null
     const metaTitle =
       (override?.title && override.title.toLowerCase() !== '__blank__' ? override.title : undefined) ||
-      (metaPrompt?.title && metaPrompt.title.toLowerCase() !== '__blank__' ? metaPrompt.title : undefined)
+      (metaPrompt?.title && metaPrompt.title.toLowerCase() !== '__blank__' ? metaPrompt.title : undefined) ||
+      storeTpl?.title
 
     if (!tplId && !override?.prompt_body && !promptText) {
       message.info('当前版本没有提示词')
@@ -1018,10 +1202,13 @@ const taskFolderTarget = useMemo(() => {
 
     setPromptModalOpen(true)
 
-    const promptBody = override?.prompt_body || promptText
+    const promptBody = override?.prompt_body || promptText || storeTpl?.prompt_body || ''
     if (promptBody) {
       const fallbackId = tplId || metaPrompt?.template_id || 'temp_template'
-      const title = resolvePromptTitle(override?.template_id || metaPrompt?.template_id || tplId, metaTitle, true)
+      const originalBody = storeTpl?.prompt_body?.trim() || ''
+      const currentBody = promptBody.trim()
+      const edited = originalBody && currentBody && originalBody !== currentBody
+      const title = resolvePromptTitle(override?.template_id || metaPrompt?.template_id || tplId, metaTitle, edited)
       setPromptTemplate({
         template_id: override?.template_id || metaPrompt?.template_id || fallbackId,
         title,
@@ -1150,6 +1337,11 @@ const taskFolderTarget = useMemo(() => {
     setLocalTemplate(synced)
   }, [configDrawerOpen, activeArtifactInfo, promptOverrides, templates])
 
+  useEffect(() => {
+    if (!configDrawerOpen) return
+    fetchTemplates(userId || undefined, tenantId || undefined)
+  }, [configDrawerOpen, fetchTemplates, userId, tenantId])
+
   return (
     <div className="page-container workspace-page">
       <div className="workspace-header">
@@ -1262,35 +1454,49 @@ const taskFolderTarget = useMemo(() => {
                         </Tooltip>
                       ),
                     }}
-                    items={artifactTabs.map((tab) => {
-                      const menuItems = [
-                        ...(tab.isDefaultMinutes ? [] : [{ key: 'rename', label: '重命名', icon: <EditOutlined /> }]),
-                        { key: 'regenerate', label: '重新生成', icon: <RedoOutlined className="workspace-tab-action-icon" /> },
-                        ...(tab.isDefaultMinutes ? [] : [{ key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true }]),
-                      ]
+                    items={displayTabs.map((tab) => {
+                      const isPending = tab.processing
+                      const menuItems = isPending
+                        ? []
+                        : [
+                            ...(tab.isDefaultMinutes ? [] : [{ key: 'rename', label: '重命名', icon: <EditOutlined /> }]),
+                            { key: 'regenerate', label: '重新生成', icon: <RedoOutlined className="workspace-tab-action-icon" /> },
+                            ...(tab.isDefaultMinutes ? [] : [{ key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true }]),
+                          ]
                       return {
                         key: tab.key,
                         label: (
-                          <span className="workspace-tab-label">
-                            <span className="workspace-tab-label__name">{tab.label}</span>
-                            <Dropdown
-                              trigger={['click']}
-                              menu={{
-                                items: menuItems,
-                                onClick: ({ key }) =>
-                                  handleTabAction(key as 'delete' | 'regenerate' | 'rename', tab.key),
-                              }}
-                            >
-                              <button
-                                type="button"
-                                className="workspace-tab-label__menu"
-                                onClick={(event) => event.stopPropagation()}
+                          <span className={`workspace-tab-label${isPending ? ' is-pending' : ''}`}>
+                            <span className="workspace-tab-label__name">
+                              {isPending ? (
+                                <>
+                                  <Spin size="small" style={{ marginRight: 4 }} /> {tab.label || '生成中'}
+                                </>
+                              ) : (
+                                tab.label
+                              )}
+                            </span>
+                            {!isPending && (
+                              <Dropdown
+                                trigger={['click']}
+                                menu={{
+                                  items: menuItems,
+                                  onClick: ({ key }) =>
+                                    handleTabAction(key as 'delete' | 'regenerate' | 'rename', tab.key),
+                                }}
                               >
-                                <DownOutlined className="workspace-tab-label__icon" />
-                              </button>
-                            </Dropdown>
+                                <button
+                                  type="button"
+                                  className="workspace-tab-label__menu"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <DownOutlined className="workspace-tab-label__icon" />
+                                </button>
+                              </Dropdown>
+                            )}
                           </span>
                         ),
+                        disabled: isPending,
                       }
                     })}
                     size="small"

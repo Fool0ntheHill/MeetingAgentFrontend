@@ -147,6 +147,13 @@ export interface EstimateCostResponse {
 
 export interface CorrectTranscriptRequest {
   corrected_text: string
+  segments?: Array<{
+    text: string
+    start_time: number
+    end_time: number
+    speaker: string
+    confidence?: number
+  }>
   regenerate_artifacts?: boolean
 }
 
@@ -157,9 +164,17 @@ export interface CorrectTranscriptResponse {
 }
 
 export interface CorrectSpeakersRequest {
-  speaker_mapping: Record<string, string> // 原标签 -> 新名称
+  speaker_mapping: Record<string, string> // 原标签/当前显示名 -> 新名称
+  segments?: Array<{
+    text: string
+    start_time: number
+    end_time: number
+    speaker: string
+    confidence?: number
+  }>
   regenerate_artifacts?: boolean
 }
+
 
 export interface CorrectSpeakersResponse {
   success: boolean
@@ -215,14 +230,28 @@ export interface GenerateArtifactResponse {
   artifact_id: string
   version: number
   display_name?: string
-  content: Record<string, any>
+  content?: Record<string, any>
   message: string
+  state?: 'processing' | 'success' | 'failed'
+  error_code?: string
+  error_message?: string
 }
 
 export interface DeleteArtifactResponse {
   success: boolean
   message: string
   artifact_id: string
+}
+
+export interface ArtifactStatusResponse {
+  artifact_id: string
+  state: 'processing' | 'success' | 'failed'
+  created_at?: string
+  error?: {
+    code?: string
+    message?: string
+    hint?: string
+  }
 }
 
 // ============================================================================

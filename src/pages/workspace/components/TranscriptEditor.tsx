@@ -37,6 +37,7 @@ interface TranscriptItemProps {
   onRenameValueChange: (val: string) => void
   onRenameScopeChange: (val: 'single' | 'global') => void
   onRenameStart: (item: TranscriptParagraph) => void
+   onRenameCancel: () => void
   readOnly: boolean
   onFocusArea?: () => void
 }
@@ -54,6 +55,7 @@ const TranscriptItem = memo(
     onRenameValueChange,
     onRenameScopeChange,
     onRenameStart,
+    onRenameCancel,
     readOnly,
     onFocusArea,
   }: TranscriptItemProps) => {
@@ -69,6 +71,7 @@ const TranscriptItem = memo(
           </button>
 
           <Popover
+            open={isRenaming}
             trigger="click"
             content={
               <div className="workspace-transcript__popover">
@@ -94,6 +97,7 @@ const TranscriptItem = memo(
                   onClick={() => {
                     if (!renameValue) return
                     onRenameSpeaker(item.speaker, renameValue, renameScope, item.paragraph_id)
+                    onRenameCancel()
                   }}
                 >
                   保存
@@ -103,6 +107,8 @@ const TranscriptItem = memo(
             onOpenChange={(open) => {
               if (open) {
                 onRenameStart(item)
+              } else {
+                onRenameCancel()
               }
             }}
           >
@@ -190,11 +196,11 @@ const TranscriptEditor = ({
   return (
     <>
       <div className="workspace-transcript">
-        <div
-          className="workspace-transcript__list"
-          ref={listRef}
-          tabIndex={-1}
-          onClick={onFocusArea}
+          <div
+            className="workspace-transcript__list"
+            ref={listRef}
+            tabIndex={-1}
+            onClick={onFocusArea}
           onFocusCapture={onFocusArea}
         >
           {safeParagraphs.map((item) => {
@@ -224,6 +230,11 @@ const TranscriptEditor = ({
                     setRenameFrom(target.speaker)
                     setRenamePid(target.paragraph_id)
                     setRenameValue(target.speaker)
+                    setRenameScope('single')
+                  }}
+                  onRenameCancel={() => {
+                    setRenamePid(undefined)
+                    setRenameValue('')
                     setRenameScope('single')
                   }}
                   readOnly={readOnly}
